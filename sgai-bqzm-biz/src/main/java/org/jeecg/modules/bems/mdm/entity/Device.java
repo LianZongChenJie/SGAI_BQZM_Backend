@@ -2,6 +2,7 @@ package org.jeecg.modules.bems.mdm.entity;
 
 import com.baomidou.mybatisplus.annotation.TableField;
 import com.baomidou.mybatisplus.annotation.TableName;
+import com.fasterxml.jackson.annotation.JsonFormat;
 import io.swagger.annotations.ApiModel;
 import io.swagger.annotations.ApiModelProperty;
 import lombok.Data;
@@ -9,6 +10,7 @@ import lombok.EqualsAndHashCode;
 import org.jeecg.modules.bems.entity.BaseEntity;
 import org.jeecg.modules.bems.permission.annotation.DataPermissionField;
 import org.jeecg.modules.bems.permission.entity.RoleDataPermission;
+import org.springframework.format.annotation.DateTimeFormat;
 
 import java.io.Serializable;
 import java.math.BigDecimal;
@@ -102,5 +104,37 @@ public class Device extends BaseEntity implements Serializable {
      */
     @TableField(exist = false)
     private String voltage;
+
+    /**
+     * 所属线路
+     */
+    @ApiModelProperty(value = "所属线路")
+    private String lineName;
+
+    /**
+     * 回路号
+     */
+    @ApiModelProperty(value = "回路号")
+    private String loopNo;
+
+    /**
+     * 厂商
+     */
+    @ApiModelProperty(value = "厂商")
+    private String manufacturer;
+
+    /**
+     * 型号
+     */
+    @ApiModelProperty(value = "型号")
+    private String model;
+
+    /**
+     * 安装日期
+     */
+    @JsonFormat(pattern = "yyyy-MM-dd")
+    @DateTimeFormat(pattern = "yyyy-MM-dd")
+    @ApiModelProperty(value = "安装日期")
+    private LocalDateTime installDate;
 
 }
