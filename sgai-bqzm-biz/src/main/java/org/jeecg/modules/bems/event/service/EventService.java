@@ -4,6 +4,7 @@ import cn.hutool.http.ContentType;
 import cn.hutool.http.HttpUtil;
 import com.alibaba.fastjson.JSONObject;
 import lombok.Data;
+import lombok.extern.slf4j.Slf4j;
 import org.apache.commons.lang3.StringUtils;
 import org.jeecg.modules.bems.event.dto.*;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -16,6 +17,7 @@ import java.util.concurrent.TimeUnit;
 
 @Service
 @Data
+@Slf4j
 public class EventService {
     /**
      * 事件工单系统地址
@@ -28,6 +30,12 @@ public class EventService {
 
     @Value("${event.spaceName}")
     private String spaceName;
+
+    /**
+     * 是否启用事件工单系统真实HTTP调用（本地开发设为false可跳过第三方调用）
+     */
+    @Value("${event.enabled:true}")
+    private Boolean enabled;
 
     /**
      * 获取token
@@ -72,6 +80,7 @@ public class EventService {
             return token;
         }
         String body = HttpUtil.createPost(path + get_token_url)
+                .timeout(10000) // 10秒超时
                 .form("phone",phone)
                 .execute()
                 .body();
@@ -89,10 +98,18 @@ public class EventService {
      */
     public String createEvent(BusinessDataDto businessData){
         businessData.setSpaceName(spaceName);
+
+        // 本地开发开关：event.enabled=false 时跳过第三方HTTP调用，返回模拟事件id
+        if(enabled != null && !enabled){
+            log.warn("事件工单系统调用已关闭(event.enabled=false)，跳过HTTP调用，返回模拟事件id。businessData={}", JSONObject.toJSONString(businessData));
+            return "MOCK-" + System.currentTimeMillis();
+        }
+
         String token = getToken();
         CreateEventDto body = new CreateEventDto();
         body.setBusinessData(businessData);
         String result = HttpUtil.createPost(path + create_event_url)
+                .timeout(10000) // 10秒超时
                 .header("x-access-token", token)
                 .body(JSONObject.toJSONString(body), ContentType.JSON.toString())
                 .execute()
@@ -108,6 +125,7 @@ public class EventService {
     public Event getEventDetail(String eventId){
         String token = getToken();
         String result = HttpUtil.createGet(path + event_detail_url)
+                .timeout(10000) // 10秒超时
                 .header("x-access-token", token)
                 .form("id", eventId)
                 .execute()
@@ -123,6 +141,7 @@ public class EventService {
     public List<EventOperateRecord> getEventRecord(String eventId){
         String token = getToken();
         String result = HttpUtil.createGet(path + event_record_url)
+                .timeout(10000) // 10秒超时
                 .header("x-access-token", token)
                 .form("orderId", eventId)
                 .execute()
@@ -137,6 +156,7 @@ public class EventService {
     public List<EventSpace> getEventSpace(){
         String token = getToken();
         String result = HttpUtil.createGet(path + space_url)
+                .timeout(10000) // 10秒超时
                 .header("x-access-token", token)
                 .execute()
                 .body();
@@ -149,6 +169,7 @@ public class EventService {
     public List<EventDistribution> eventDistribution(){
         String token = getToken();
         String result = HttpUtil.createGet(path + event_distribution_url)
+                .timeout(10000) // 10秒超时
                 .header("x-access-token", token)
                 .execute().body();
         return JSONObject.parseObject(result).getJSONArray("result").toJavaList(EventDistribution.class);
@@ -160,6 +181,7 @@ public class EventService {
     public List<EventDistribution> orderDistribution(){
         String token = getToken();
         String result = HttpUtil.createGet(path + order_distribution_url)
+                .timeout(10000) // 10秒超时
                 .header("x-access-token", token)
                 .execute().body();
         return JSONObject.parseObject(result).getJSONArray("result").toJavaList(EventDistribution.class);
