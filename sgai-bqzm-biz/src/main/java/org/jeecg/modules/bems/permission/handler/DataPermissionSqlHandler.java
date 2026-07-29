@@ -64,13 +64,14 @@ public class DataPermissionSqlHandler {
 
                 log.debug("构建权限条件: type={}, field={}, count={}",
                          permissionType, fieldName, ids.size());
-            } else {
-                EqualsTo emptyCondition = new EqualsTo();
-                emptyCondition.setLeftExpression(new LongValue(1));
-                emptyCondition.setRightExpression(new LongValue(0));
-                expressions.add(emptyCondition);
-                log.debug("没有可用的权限数据: type={}, field={}, 添加1=0条件确保返回空结果", permissionType, fieldName);
             }
+            // 没有权限数据时不加条件，放行查所有
+        }
+
+        // 没有任何权限条件，直接返回null，不加限制
+        if (expressions.isEmpty()) {
+            log.info("无可用权限数据，不加权限限制: tableName={}", tableName);
+            return null;
         }
 
         // 使用 AND 连接多个条件（用户必须同时满足所有权限条件）

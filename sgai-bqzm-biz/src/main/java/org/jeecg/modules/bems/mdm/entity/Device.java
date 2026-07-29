@@ -3,6 +3,7 @@ package org.jeecg.modules.bems.mdm.entity;
 import com.baomidou.mybatisplus.annotation.TableField;
 import com.baomidou.mybatisplus.annotation.TableName;
 import com.fasterxml.jackson.annotation.JsonFormat;
+import com.fasterxml.jackson.annotation.JsonProperty;
 import io.swagger.annotations.ApiModel;
 import io.swagger.annotations.ApiModelProperty;
 import lombok.Data;
@@ -126,8 +127,9 @@ public class Device extends BaseEntity implements Serializable {
     /**
      * 型号
      */
+    @JsonProperty("model")
     @ApiModelProperty(value = "型号")
-    private String model;
+    private String deviceModel;
 
     /**
      * 安装日期

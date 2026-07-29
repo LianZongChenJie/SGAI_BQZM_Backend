@@ -1,8 +1,8 @@
 server:
-  port: 7010
+  port: 7011
 spring:
   application:
-    name: sgai-bqzm
+    name: sgai-bqzm-kaifa
   config:
     import:
       - optional:nacos:jeecg.yaml

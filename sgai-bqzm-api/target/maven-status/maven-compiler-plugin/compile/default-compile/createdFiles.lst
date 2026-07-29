@@ -1,0 +1,11 @@
+org\jeecg\modules\bems\api\BemsHelloApi.class
+org\jeecg\modules\bems\entity\DeviceInfo.class
+org\jeecg\modules\bems\api\BemsSpaceApi.class
+org\jeecg\modules\bems\entity\DeviceEntity.class
+org\jeecg\modules\bems\entity\BemsHelloEntity.class
+org\jeecg\modules\bems\api\fallback\BemsHelloFallback.class
+org\jeecg\modules\bems\api\fallback\BemsSpaceFallback.class
+org\jeecg\modules\bems\api\fallback\BemsDeviceFallback.class
+org\jeecg\modules\bems\vo\BemsHelloPage.class
+org\jeecg\modules\bems\entity\SpaceInfo.class
+org\jeecg\modules\bems\api\BemsDeviceApi.class
