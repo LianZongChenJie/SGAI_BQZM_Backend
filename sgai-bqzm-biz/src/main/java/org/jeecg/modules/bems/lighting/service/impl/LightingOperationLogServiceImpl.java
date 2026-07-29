@@ -1,0 +1,51 @@
+package org.jeecg.modules.bems.lighting.service.impl;
+
+import cn.hutool.core.util.StrUtil;
+import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
+import com.baomidou.mybatisplus.core.metadata.IPage;
+import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
+import com.baomidou.mybatisplus.extension.service.impl.ServiceImpl;
+import org.apache.shiro.SecurityUtils;
+import org.jeecg.common.system.vo.LoginUser;
+import org.jeecg.modules.bems.lighting.dto.LightingOperationLogQueryDto;
+import org.jeecg.modules.bems.lighting.entity.LightingOperationLog;
+import org.jeecg.modules.bems.lighting.mapper.LightingOperationLogMapper;
+import org.jeecg.modules.bems.lighting.service.ILightingOperationLogService;
+import org.springframework.stereotype.Service;
+
+import java.time.LocalDateTime;
+
+@Service
+public class LightingOperationLogServiceImpl extends ServiceImpl<LightingOperationLogMapper, LightingOperationLog> implements ILightingOperationLogService {
+
+    @Override
+    public void saveLog(String relType,Long relId,String name,LocalDateTime time,String operationType){
+        String operationBy = "照明计划";
+        try {
+            LoginUser sysUser = (LoginUser) SecurityUtils.getSubject().getPrincipal();
+            if (sysUser != null) {
+                operationBy = sysUser.getUsername();
+            }
+        } catch (Exception e) {
+            // 异步场景（如MQ监听器）中SecurityManager不可用，使用默认用户
+        }
+        LightingOperationLog data = new LightingOperationLog();
+        data.setRelType(LightingOperationLog.REL_TYPE_AREA);
+        data.setRelId(relId);
+        data.setName(name);
+        data.setOperationTime(time);
+        data.setOperationType(operationType);
+        data.setOperationBy(operationBy);
+        super.save(data);
+    }
+
+    @Override
+    public IPage<LightingOperationLog> listPage(LightingOperationLogQueryDto params) {
+        return page(new Page<>(params.getPageNo(), params.getPageSize()),new LambdaQueryWrapper<LightingOperationLog>()
+                .eq(StrUtil.isNotEmpty(params.getRelType()),LightingOperationLog::getRelType, params.getRelType())
+                .ge(params.getStartTime() != null, LightingOperationLog::getOperationTime, params.getStartTime())
+                .le(params.getEndTime() != null, LightingOperationLog::getOperationTime, params.getEndTime())
+                .orderByDesc(LightingOperationLog::getOperationTime));
+    }
+
+}

@@ -1,0 +1,44 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="org.jeecg.modules.bems.mapper.RealDataMapper">
+
+    <select id="findFirstByTimeRangeAsc" resultType="org.jeecg.modules.bems.entity.RealData">
+        SELECT *
+        FROM (
+        SELECT *,
+        @row_number:=CASE WHEN @current_device = device_id THEN @row_number + 1 ELSE 1 END AS rn,
+        @current_device:=device_id
+        FROM data_real, (SELECT @row_number:=0, @current_device:=NULL) AS t
+        WHERE `time` BETWEEN #{startTime} AND #{endTime}
+        ORDER BY device_id, `time` ASC
+        ) AS temp
+        WHERE temp.rn = 1;
+    </select>
+
+    <select id="findFirstByTimeRangeDesc" resultType="org.jeecg.modules.bems.entity.RealData">
+        SELECT *
+        FROM (
+        SELECT *,
+        @row_number:=CASE WHEN @current_device = device_id THEN @row_number + 1 ELSE 1 END AS rn,
+        @current_device:=device_id
+        FROM data_real, (SELECT @row_number:=0, @current_device:=NULL) AS t
+        WHERE `time` BETWEEN #{startTime} AND #{endTime}
+        ORDER BY device_id, `time` DESC
+        ) AS temp
+        WHERE temp.rn = 1;
+    </select>
+
+    <select id="findFirstByLtTimeDesc" resultType="org.jeecg.modules.bems.entity.RealData">
+        SELECT *
+        FROM (
+        SELECT *,
+        @row_number:=CASE WHEN @current_device = device_id THEN @row_number + 1 ELSE 1 END AS rn,
+        @current_device:=device_id
+        FROM data_real, (SELECT @row_number:=0, @current_device:=NULL) AS t
+        WHERE `time` BETWEEN #{startTime} AND #{endTime}
+        ORDER BY device_id, `time` DESC
+        ) AS temp
+        WHERE temp.rn = 1;
+    </select>
+
+</mapper>

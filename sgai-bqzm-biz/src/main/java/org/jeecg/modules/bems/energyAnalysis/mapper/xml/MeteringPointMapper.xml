@@ -1,0 +1,90 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="org.jeecg.modules.bems.energyAnalysis.mapper.MeteringPointMapper">
+
+    <select id="selectMeteringPoint" resultType="org.jeecg.modules.bems.energyAnalysis.vo.MeteringPointVo">
+        select *
+        from (select id as point_id,
+        node_code as point_code,
+        node_name as point_name,
+        category_id,
+        space_id,
+        create_time,
+        '1' as point_type
+        from metering_point mr
+        <where>
+            <!-- 数据权限过滤：专业权限 -->
+            <if test="categoryIds != null and categoryIds.size() > 0">
+                and mr.category_id IN
+                <foreach collection="categoryIds" item="id" open="(" separator="," close=")">
+                    #{id}
+                </foreach>
+            </if>
+            <if test="categoryIds == null or categoryIds.size() == 0">
+                and mr.category_id is null
+            </if>
+            <!-- 数据权限过滤：空间权限 -->
+            <if test="spaceIds != null and spaceIds.size() > 0">
+                and mr.space_id IN
+                <foreach collection="spaceIds" item="id" open="(" separator="," close=")">
+                    #{id}
+                </foreach>
+            </if>
+            <if test="spaceIds == null or spaceIds.size() == 0">
+                and mr.space_id is null
+            </if>
+            <if test="params.type != null and params.type != ''">
+                and mr.type = #{params.type}
+            </if>
+            <if test="params.parentId != null">
+                and parent_id = #{params.parentId}
+            </if>
+        </where>
+        union all
+        select id as point_id,
+        device_code as point_code,
+        device_name as point_name,
+        category_id,
+        space_id,
+        create_time,
+        '2' as point_type
+        from device
+        <where>
+            device_type = #{params.deviceType}
+            <!-- 数据权限过滤：专业权限 -->
+            <if test="categoryIds != null and categoryIds.size() > 0">
+                and category_id IN
+                <foreach collection="categoryIds" item="id" open="(" separator="," close=")">
+                    #{id}
+                </foreach>
+            </if>
+            <if test="categoryIds == null or categoryIds.size() == 0">
+                and category_id is null
+            </if>
+            <!-- 数据权限过滤：空间权限 -->
+            <if test="spaceIds != null and spaceIds.size() > 0">
+                and space_id IN
+                <foreach collection="spaceIds" item="id" open="(" separator="," close=")">
+                    #{id}
+                </foreach>
+            </if>
+            <if test="spaceIds == null or spaceIds.size() == 0">
+                and space_id is null
+            </if>
+        </where>
+        ) point
+        <where>
+            <if test="params.pointCode != null and params.pointCode != ''">
+                and (point.point_code like concat('%', #{params.pointCode}, '%') or point.point_name like concat('%', #{params.pointCode}, '%'))
+            </if>
+            <if test="params.categoryId != null">
+                and point.category_id = #{params.categoryId}
+            </if>
+            <if test="params.spaceId != null">
+                and point.space_id = #{params.spaceId}
+            </if>
+        </where>
+        order by point.create_time desc
+    </select>
+
+</mapper>

@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="org.jeecg.modules.bems.energyAnalysis.mapper.MeteringPointDataDayMapper">
+
+    <select id="findAvgByLtTimeAndPointId" resultType="java.math.BigDecimal">
+        select avg(`value`)
+        from metering_point_data_day
+        where metering_point_id = #{pointId}
+        and time &lt; #{date}
+    </select>
+
+</mapper>
