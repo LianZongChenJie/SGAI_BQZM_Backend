@@ -11,7 +11,7 @@ import org.springframework.format.annotation.DateTimeFormat;
 @Data
 public class BaseEntity {
     /**主键*/
-    @TableId(type = IdType.AUTO)
+    @TableId(type = IdType.ASSIGN_ID)
     @ApiModelProperty(value = "主键")
     private java.lang.Long id;
     /**创建人*/

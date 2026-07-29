@@ -71,6 +71,11 @@ public class AlarmRules extends BaseEntity {
     private String noticeUser;
 
     /**
+     * 通知方式，多个用逗号分隔。平台：platform、短信：sms、邮件：email
+     */
+    private String noticeWay;
+
+    /**
      * 启用状态，启用：1；禁用：0
      */
     private String enabledStatus;
