@@ -89,26 +89,26 @@ public Result<EnergyConsumptionStatisticsDto> waterStatisticsForDay(){
     /**
      * 定时更新能耗统计-当日缓存
      */
-    @Scheduled(fixedRate = 10 * 60 * 1000) // 每10分钟执行一次
-    public void refreshWaterStatisticsForDayCache() {
-        try {
-            Long water = businessConfigService.getLongByKey(BusinessConfigConstant.ENERGY_CONSUMPTION_PSD_WATER);
-            EnergyConsumptionStatisticsDto waterData = energyConsumptionStatisticsService.energyConsumptionStatisticsForDay(water, LocalDate.now());
-
-            String waterKey = "homePage:waterStatisticsForDay";
-            redisUtil.set(waterKey, waterData, 60 * 10);
-            log.info("成功更新水能耗统计-当日缓存");
-
-            Long electricity = businessConfigService.getLongByKey(BusinessConfigConstant.ENERGY_CONSUMPTION_PSD_ELECTRICITY);
-            EnergyConsumptionStatisticsDto electricityData = energyConsumptionStatisticsService.energyConsumptionStatisticsForDay(electricity, LocalDate.now());
-
-            String electricityKey = "homePage:electricityStatisticsForDay";
-            redisUtil.set(electricityKey, electricityData, 60 * 10);
-            log.info("成功更新水能耗统计-当日缓存");
-        } catch (Exception e) {
-            log.error("更新水能耗统计-当日缓存失败", e);
-        }
-    }
+//    @Scheduled(fixedRate = 10 * 60 * 1000) // 每10分钟执行一次
+//    public void refreshWaterStatisticsForDayCache() {
+//        try {
+//            Long water = businessConfigService.getLongByKey(BusinessConfigConstant.ENERGY_CONSUMPTION_PSD_WATER);
+//            EnergyConsumptionStatisticsDto waterData = energyConsumptionStatisticsService.energyConsumptionStatisticsForDay(water, LocalDate.now());
+//
+//            String waterKey = "homePage:waterStatisticsForDay";
+//            redisUtil.set(waterKey, waterData, 60 * 10);
+//            log.info("成功更新水能耗统计-当日缓存");
+//
+//            Long electricity = businessConfigService.getLongByKey(BusinessConfigConstant.ENERGY_CONSUMPTION_PSD_ELECTRICITY);
+//            EnergyConsumptionStatisticsDto electricityData = energyConsumptionStatisticsService.energyConsumptionStatisticsForDay(electricity, LocalDate.now());
+//
+//            String electricityKey = "homePage:electricityStatisticsForDay";
+//            redisUtil.set(electricityKey, electricityData, 60 * 10);
+//            log.info("成功更新水能耗统计-当日缓存");
+//        } catch (Exception e) {
+//            log.error("更新水能耗统计-当日缓存失败", e);
+//        }
+//    }
 
 
     /**

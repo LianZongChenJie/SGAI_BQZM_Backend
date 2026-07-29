@@ -71,6 +71,9 @@ public class AlarmRulePoint extends BaseEntity {
     private String conditionValue;
 
     public String getTimeGranularityStr(){
+        if (timeGranularity == null) {
+            return "";
+        }
         switch (timeGranularity){
             case TIME_GRANULARITY_HOUR:
                 return "小时";
