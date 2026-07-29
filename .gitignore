@@ -1,0 +1,21 @@
+# IDE配置
+.idea/
+.vscode/
+*.iml
+*.xml
+*.iws
+*.ipr
+
+# Maven编译产物
+target/
+
+# 图片、临时文档
+*.png
+*.jpg
+*.jpeg
+*.gif
+*.xlsx
+*.xls
+
+# 日志
+*.log
