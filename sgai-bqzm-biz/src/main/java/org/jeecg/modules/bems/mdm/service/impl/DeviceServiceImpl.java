@@ -51,12 +51,20 @@ public class DeviceServiceImpl extends ServiceImpl<DeviceMapper, Device> impleme
     @Override
     public IPage<Device> listPage(DeviceDto params) {
         Page<Device> page = page(new Page<>(params.getPageNo(), params.getPageSize()), getQueryWrapper(params));
-        Map<Long,String> attributeMap = deviceAttributeService.findByDeviceIdsAndCode(page.getRecords().stream().map(Device::getId).toList(),"ColVoltage")
-                        .stream()
-                                .collect(Collectors.toMap(DeviceAttribute::getDeviceId,DeviceAttribute::getValue,(k1,k2) -> k2));
-        page.getRecords().forEach(item -> {
-            item.setVoltage(attributeMap.get(item.getId()));
-        });
+        List<Device> records = page.getRecords();
+        if (CollectionUtil.isNotEmpty(records)) {
+            List<Long> deviceIds = records.stream().map(Device::getId).toList();
+            Map<Long,String> attributeMap = deviceAttributeService.findByDeviceIdsAndCode(deviceIds,"ColVoltage")
+                            .stream()
+                                    .collect(Collectors.toMap(DeviceAttribute::getDeviceId,DeviceAttribute::getValue,(k1,k2) -> k2));
+            List<Long> spaceIds = records.stream().map(Device::getSpaceId).filter(Objects::nonNull).distinct().toList();
+            Map<Long,String> spaceMap = CollectionUtil.isEmpty(spaceIds) ? Collections.emptyMap() :
+                    spaceService.listByIds(spaceIds).stream().collect(Collectors.toMap(Space::getId, Space::getFullName));
+            records.forEach(item -> {
+                item.setVoltage(attributeMap.get(item.getId()));
+                item.setSpaceName(spaceMap.get(item.getSpaceId()));
+            });
+        }
         return page;
     }
 
