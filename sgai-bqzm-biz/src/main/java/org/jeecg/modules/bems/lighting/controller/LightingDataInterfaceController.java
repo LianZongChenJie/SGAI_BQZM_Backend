@@ -3,14 +3,20 @@ package org.jeecg.modules.bems.lighting.controller;
 import io.swagger.annotations.Api;
 import io.swagger.annotations.ApiOperation;
 import lombok.AllArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
+import org.apache.shiro.SecurityUtils;
 import org.jeecg.common.api.vo.Result;
+import org.jeecg.common.system.vo.LoginUser;
 import org.jeecg.modules.bems.lighting.entity.LightingDataInterface;
 import org.jeecg.modules.bems.lighting.service.ILightingDataInterfaceService;
 import org.springframework.web.bind.annotation.*;
 
+import java.time.LocalDateTime;
+
 /**
  * 数据采集接口
  */
+@Slf4j
 @Api(tags = "照明-数据采集接口")
 @RestController
 @RequestMapping("/bems/lighting/dataInterface")
@@ -63,6 +69,7 @@ public class LightingDataInterfaceController {
     @ApiOperation("新增数据采集接口")
     @PostMapping("/add")
     public Result<?> add(@RequestBody LightingDataInterface dataInterface) {
+        fillAuditFieldsForCreate(dataInterface);
         service.save(dataInterface);
         return Result.ok("新增成功");
     }
@@ -73,6 +80,7 @@ public class LightingDataInterfaceController {
     @ApiOperation("更新数据采集接口")
     @PostMapping("/update")
     public Result<?> update(@RequestBody LightingDataInterface dataInterface) {
+        fillAuditFieldsForUpdate(dataInterface);
         service.updateById(dataInterface);
         return Result.ok("更新成功");
     }
@@ -95,5 +103,30 @@ public class LightingDataInterfaceController {
     public Result<?> updateStatus(Long id, String status) {
         service.updateStatus(id, status);
         return Result.ok("更新成功");
+    }
+
+    private void fillAuditFieldsForCreate(LightingDataInterface entity) {
+        try {
+            LoginUser user = (LoginUser) SecurityUtils.getSubject().getPrincipal();
+            if (user != null) {
+                entity.setCreateBy(user.getUsername());
+                entity.setSysOrgCode(user.getOrgCode());
+            }
+        } catch (Exception e) {
+            log.warn("获取当前用户信息失败: {}", e.getMessage());
+        }
+        entity.setCreateTime(LocalDateTime.now());
+    }
+
+    private void fillAuditFieldsForUpdate(LightingDataInterface entity) {
+        try {
+            LoginUser user = (LoginUser) SecurityUtils.getSubject().getPrincipal();
+            if (user != null) {
+                entity.setUpdateBy(user.getUsername());
+            }
+        } catch (Exception e) {
+            log.warn("获取当前用户信息失败: {}", e.getMessage());
+        }
+        entity.setUpdateTime(LocalDateTime.now());
     }
 }

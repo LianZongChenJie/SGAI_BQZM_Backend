@@ -22,7 +22,7 @@ public class LightingDataInterface {
     /**
      * 主键
      */
-    @TableId(type = IdType.AUTO)
+    @TableId(type = IdType.ASSIGN_ID)
     @ApiModelProperty(value = "主键ID")
     private Long id;
 
