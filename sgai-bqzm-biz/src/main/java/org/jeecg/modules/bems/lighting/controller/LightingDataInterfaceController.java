@@ -59,7 +59,7 @@ public class LightingDataInterfaceController {
      */
     @ApiOperation("获取接口详情")
     @GetMapping("/detail")
-    public Result<?> detail(Long id) {
+    public Result<?> detail(String id) {
         return Result.ok(service.getById(id));
     }
 
@@ -90,7 +90,7 @@ public class LightingDataInterfaceController {
      */
     @ApiOperation("删除数据采集接口")
     @PostMapping("/delete")
-    public Result<?> delete(Long id) {
+    public Result<?> delete(String id) {
         service.removeById(id);
         return Result.ok("删除成功");
     }
@@ -100,7 +100,7 @@ public class LightingDataInterfaceController {
      */
     @ApiOperation("更新接口状态")
     @PostMapping("/updateStatus")
-    public Result<?> updateStatus(Long id, String status) {
+    public Result<?> updateStatus(String id, String status) {
         service.updateStatus(id, status);
         return Result.ok("更新成功");
     }

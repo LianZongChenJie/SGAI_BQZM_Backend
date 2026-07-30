@@ -24,7 +24,7 @@ public class LightingDataInterface {
      */
     @TableId(type = IdType.ASSIGN_ID)
     @ApiModelProperty(value = "主键ID")
-    private Long id;
+    private String id;
 
     /**
      * 接口名称

@@ -21,5 +21,5 @@ public interface ILightingDataInterfaceService extends IService<LightingDataInte
     /**
      * 更新接口状态
      */
-    void updateStatus(Long id, String status);
+    void updateStatus(String id, String status);
 }

@@ -18,22 +18,18 @@ import java.time.LocalDateTime;
 public class AlarmRecord extends BaseEntity {
 
     /**
-     * 告警状态：未处理
+     * 告警状态：待处理
      */
     public static final String ALARM_STATUS_UNTREATED = "1";
 
     /**
-     * 告警状态：误报
+     * 告警状态：已完成
      */
     public static final String ALARM_STATUS_TREATED = "2";
     /**
-     * 告警状态：已转工单
+     * 告警状态：处理中（转单）
      */
     public static final String ALARM_STATUS_EVENT = "3";
-    /**
-     * 告警状态：完成
-     */
-    public static final String ALARM_STATUS_COMPLETED = "4";
 
     /**
      * 告警规则id
@@ -138,7 +134,7 @@ public class AlarmRecord extends BaseEntity {
     private String chargePersonName;
 
     /**
-     * 状态。未处理：1；已消除：2
+     * 状态。待处理：1；已完成：2；处理中（转单）：3
      */
     private String alarmStatus;
 

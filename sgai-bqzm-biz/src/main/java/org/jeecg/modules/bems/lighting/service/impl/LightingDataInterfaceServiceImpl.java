@@ -38,7 +38,7 @@ public class LightingDataInterfaceServiceImpl extends ServiceImpl<LightingDataIn
     }
 
     @Override
-    public void updateStatus(Long id, String status) {
+    public void updateStatus(String id, String status) {
         super.update(new LambdaUpdateWrapper<LightingDataInterface>()
                 .eq(LightingDataInterface::getId, id)
                 .set(LightingDataInterface::getStatus, status)

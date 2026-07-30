@@ -75,6 +75,7 @@ public class AlarmRecordServiceImpl extends ServiceImpl<AlarmRecordMapper, Alarm
         return page(
                 new Page<>(params.getPageNo(), params.getPageSize()),
                 getQueryWrapper(params)
+                        .ne(AlarmRecord::getAlarmStatus, AlarmRecord.ALARM_STATUS_TREATED)
                         .orderByDesc(AlarmRecord::getAlarmTime)
         );
     }
@@ -370,7 +371,7 @@ public class AlarmRecordServiceImpl extends ServiceImpl<AlarmRecordMapper, Alarm
     public void completed(String eventId) {
         super.update(new LambdaUpdateWrapper<AlarmRecord>()
                 .eq(AlarmRecord::getEventId, eventId)
-                .set(AlarmRecord::getAlarmStatus, AlarmRecord.ALARM_STATUS_COMPLETED)
+                .set(AlarmRecord::getAlarmStatus, AlarmRecord.ALARM_STATUS_TREATED)
         );
     }
 
