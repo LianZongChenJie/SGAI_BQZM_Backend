@@ -1,6 +1,5 @@
 package org.jeecg.modules.bems.lighting.entity;
 
-import com.baomidou.mybatisplus.annotation.IdType;
 import com.baomidou.mybatisplus.annotation.TableField;
 import com.baomidou.mybatisplus.annotation.TableId;
 import com.baomidou.mybatisplus.annotation.TableName;
@@ -25,7 +24,7 @@ public class LightingArea {
     /**
      * 主键
      */
-    @TableId(type= IdType.AUTO)
+    @TableId
     @ApiModelProperty(value = "主键ID")
     private Long id;
 

@@ -26,7 +26,7 @@ public class LightingOperationLog {
     /**
      * 主键
      */
-    @TableId(type = IdType.AUTO)
+    @TableId(type = IdType.ASSIGN_ID)
     private Long id;
     /**
      * 关联类型，区域：1、回路：2
