@@ -19,7 +19,7 @@ import java.time.LocalDateTime;
 public class LightingOperationLogServiceImpl extends ServiceImpl<LightingOperationLogMapper, LightingOperationLog> implements ILightingOperationLogService {
 
     @Override
-    public void saveLog(String relType,Long relId,String name,LocalDateTime time,String operationType){
+    public void saveLog(String relType, Long relId, String name, LocalDateTime time, String operationType) {
         String operationBy = "照明计划";
         try {
             LoginUser sysUser = (LoginUser) SecurityUtils.getSubject().getPrincipal();
@@ -29,8 +29,13 @@ public class LightingOperationLogServiceImpl extends ServiceImpl<LightingOperati
         } catch (Exception e) {
             // 异步场景（如MQ监听器）中SecurityManager不可用，使用默认用户
         }
+        saveLog(relType, relId, name, time, operationType, operationBy);
+    }
+
+    @Override
+    public void saveLog(String relType, Long relId, String name, LocalDateTime time, String operationType, String operationBy) {
         LightingOperationLog data = new LightingOperationLog();
-        data.setRelType(LightingOperationLog.REL_TYPE_AREA);
+        data.setRelType(relType);
         data.setRelId(relId);
         data.setName(name);
         data.setOperationTime(time);
@@ -41,8 +46,8 @@ public class LightingOperationLogServiceImpl extends ServiceImpl<LightingOperati
 
     @Override
     public IPage<LightingOperationLog> listPage(LightingOperationLogQueryDto params) {
-        return page(new Page<>(params.getPageNo(), params.getPageSize()),new LambdaQueryWrapper<LightingOperationLog>()
-                .eq(StrUtil.isNotEmpty(params.getRelType()),LightingOperationLog::getRelType, params.getRelType())
+        return page(new Page<>(params.getPageNo(), params.getPageSize()), new LambdaQueryWrapper<LightingOperationLog>()
+                .eq(StrUtil.isNotEmpty(params.getRelType()), LightingOperationLog::getRelType, params.getRelType())
                 .ge(params.getStartTime() != null, LightingOperationLog::getOperationTime, params.getStartTime())
                 .le(params.getEndTime() != null, LightingOperationLog::getOperationTime, params.getEndTime())
                 .orderByDesc(LightingOperationLog::getOperationTime));

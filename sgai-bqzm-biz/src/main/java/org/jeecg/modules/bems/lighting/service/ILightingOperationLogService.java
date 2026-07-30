@@ -10,7 +10,7 @@ import java.time.LocalDateTime;
 public interface ILightingOperationLogService extends IService<LightingOperationLog> {
 
     /**
-     * 保存操作记录
+     * 保存操作记录（自动获取当前登录用户作为操作人）
      * @param relType 关联类型
      * @param relId 关联id
      * @param name 名称
@@ -18,6 +18,17 @@ public interface ILightingOperationLogService extends IService<LightingOperation
      * @param operationType 操作类型
      */
     void saveLog(String relType, Long relId, String name, LocalDateTime time, String operationType);
+
+    /**
+     * 保存操作记录（指定操作人，用于定时器等非用户触发的场景）
+     * @param relType 关联类型
+     * @param relId 关联id
+     * @param name 名称
+     * @param time 时间
+     * @param operationType 操作类型
+     * @param operationBy 操作人
+     */
+    void saveLog(String relType, Long relId, String name, LocalDateTime time, String operationType, String operationBy);
 
     IPage<LightingOperationLog> listPage(LightingOperationLogQueryDto params);
 }
