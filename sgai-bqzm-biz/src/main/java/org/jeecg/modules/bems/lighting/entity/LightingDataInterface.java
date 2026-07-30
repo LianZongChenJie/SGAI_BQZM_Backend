@@ -33,6 +33,18 @@ public class LightingDataInterface {
     private String interfaceName;
 
     /**
+     * 空间ID
+     */
+    @ApiModelProperty(value = "空间ID")
+    private Long spaceId;
+
+    /**
+     * 空间名称
+     */
+    @ApiModelProperty(value = "空间名称")
+    private String spaceName;
+
+    /**
      * 厂商：西门子、施耐德、ABB、华为PLC、海康威视
      */
     @ApiModelProperty(value = "厂商：西门子、施耐德、ABB、华为PLC、海康威视")
