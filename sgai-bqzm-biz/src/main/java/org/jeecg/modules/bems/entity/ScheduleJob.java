@@ -12,8 +12,12 @@ import org.springframework.format.annotation.DateTimeFormat;
  * 定时任务配置
  * 
  * 支持两种模式：
- * 1. 灯光控制模式（controlType=AREA/CIRCUIT）: 定时开灯/关灯
+ * 1. 灯光控制模式（controlType=AREA/CIRCUIT 或 relType=区域/回路）: 定时开灯/关灯，支持多目标
  * 2. 通用反射模式（controlType=null）: 通过 beanName + methodName 调用任意 Spring Bean 方法
+ * 
+ * 时间配置（与照明计划接口一致，用户友好）：
+ * - 方式一：executionTime(HH:mm:ss) + cycleType(每天/工作日/周末/自定义) + enabledWeek(自定义时填1-7) + startDate/endDate(生效日期范围)
+ * - 方式二（高级）：直接填 cronExpression，优先级高于 executionTime
  */
 @EqualsAndHashCode(callSuper = true)
 @Data
@@ -38,6 +42,27 @@ public class ScheduleJob extends BaseEntity {
     @ApiModelProperty(value = "目标ID（区域ID或回路ID）")
     private Long targetId;
 
+    /**
+     * 关联类型：区域、回路
+     * 与照明计划（lighting_plan）接口保持一致，如 "区域"、"回路"
+     */
+    @ApiModelProperty(value = "关联类型：区域、回路（与照明计划接口一致）")
+    private String relType;
+
+    /**
+     * 关联ID，多个以英文逗号分隔
+     * 与照明计划（lighting_plan）接口保持一致，如 "1,2,3"
+     */
+    @ApiModelProperty(value = "关联ID，多个以英文逗号分隔（与照明计划接口一致）")
+    private String relIds;
+
+    /**
+     * 计划类型：普通计划、节日计划、应急计划
+     * 与照明计划（lighting_plan）接口保持一致
+     */
+    @ApiModelProperty(value = "计划类型：普通计划、节日计划、应急计划")
+    private String planType;
+
     /** 
      * 操作类型
      * 灯光控制时: OPEN-开启 CLOSE-关闭
@@ -54,9 +79,29 @@ public class ScheduleJob extends BaseEntity {
     @ApiModelProperty(value = "执行方法名")
     private String methodName;
 
-    /** cron 表达式 */
-    @ApiModelProperty(value = "cron 表达式")
+    /** cron 表达式（高级用户使用，优先级高于 executionTime） */
+    @ApiModelProperty(value = "cron 表达式（高级用户使用，优先级高于 executionTime）")
     private String cronExpression;
+
+    /** 执行时间 HH:mm:ss（与照明计划接口一致） */
+    @ApiModelProperty(value = "执行时间 HH:mm:ss，如 18:00:00")
+    private String executionTime;
+
+    /** 周期类型：每天、工作日、周末、自定义（与照明计划接口一致） */
+    @ApiModelProperty(value = "周期类型：每天、工作日、周末、自定义")
+    private String cycleType;
+
+    /** 周几执行（周期类型为自定义时使用，1-7，1=周一，多个逗号分隔） */
+    @ApiModelProperty(value = "周几执行（自定义周期时使用，1=周一，多个逗号分隔）")
+    private String enabledWeek;
+
+    /** 生效开始日期 yyyy-MM-dd */
+    @ApiModelProperty(value = "生效开始日期 yyyy-MM-dd")
+    private String startDate;
+
+    /** 生效结束日期 yyyy-MM-dd */
+    @ApiModelProperty(value = "生效结束日期 yyyy-MM-dd")
+    private String endDate;
 
     /** 任务参数（可选，通用反射模式时使用） */
     @ApiModelProperty(value = "任务参数")
