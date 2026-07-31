@@ -33,7 +33,7 @@ public class LightingPlan extends BaseEntity {
     /**
      * 主键
      */
-    @TableId(type = IdType.AUTO)
+    @TableId(type = IdType.ASSIGN_ID)
     public Long id;
 
     /**
