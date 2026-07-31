@@ -4,6 +4,8 @@ import com.baomidou.mybatisplus.annotation.IdType;
 import com.baomidou.mybatisplus.annotation.TableField;
 import com.baomidou.mybatisplus.annotation.TableId;
 import com.baomidou.mybatisplus.annotation.TableName;
+import com.fasterxml.jackson.databind.annotation.JsonSerialize;
+import com.fasterxml.jackson.databind.ser.std.ToStringSerializer;
 import lombok.Data;
 import lombok.EqualsAndHashCode;
 import org.jeecg.modules.bems.entity.BaseEntity;
@@ -31,9 +33,10 @@ public class LightingPlan extends BaseEntity {
     public static final String STATUS_DISABLE = "禁用";
 
     /**
-     * 主键
+     * 主键（雪花ID 19位，超过 JS 安全整数上限，JSON 序列化为字符串避免前端精度丢失）
      */
     @TableId(type = IdType.ASSIGN_ID)
+    @JsonSerialize(using = ToStringSerializer.class)
     public Long id;
 
     /**
@@ -97,8 +100,9 @@ public class LightingPlan extends BaseEntity {
     private String remark;
 
     /**
-     * 关联的定时任务ID（schedule_job.id），为空表示由照明计划页面创建
+     * 关联的定时任务ID（schedule_job.id，雪花ID），为空表示由照明计划页面创建
      */
+    @JsonSerialize(using = ToStringSerializer.class)
     private Long scheduleJobId;
 
     /**

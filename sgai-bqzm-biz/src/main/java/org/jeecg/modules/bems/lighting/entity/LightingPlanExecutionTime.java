@@ -3,6 +3,8 @@ package org.jeecg.modules.bems.lighting.entity;
 import com.baomidou.mybatisplus.annotation.IdType;
 import com.baomidou.mybatisplus.annotation.TableId;
 import com.baomidou.mybatisplus.annotation.TableName;
+import com.fasterxml.jackson.databind.annotation.JsonSerialize;
+import com.fasterxml.jackson.databind.ser.std.ToStringSerializer;
 import lombok.Data;
 import org.springframework.util.StringUtils;
 
@@ -17,9 +19,17 @@ public class LightingPlanExecutionTime {
     private static final DateTimeFormatter TIME_FORMATTER = DateTimeFormatter.ofPattern("HH:mm:ss");
     private static final DateTimeFormatter DATE_FORMATTER = DateTimeFormatter.ofPattern("yyyy-MM-dd");
 
+    /**
+     * 主键（雪花ID，JSON 序列化为字符串避免前端精度丢失）
+     */
     @TableId(type = IdType.ASSIGN_ID)
+    @JsonSerialize(using = ToStringSerializer.class)
     private Long id;
 
+    /**
+     * 计划id（雪花ID，JSON 序列化为字符串避免前端精度丢失）
+     */
+    @JsonSerialize(using = ToStringSerializer.class)
     private Long planId;
 
     private String executionTime;
