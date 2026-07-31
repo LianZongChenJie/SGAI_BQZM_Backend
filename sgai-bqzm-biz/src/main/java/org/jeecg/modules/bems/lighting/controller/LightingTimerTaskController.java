@@ -4,6 +4,7 @@ import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.baomidou.mybatisplus.core.metadata.IPage;
 import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
 import io.swagger.annotations.Api;
+import io.swagger.annotations.ApiOperation;
 import lombok.AllArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.apache.commons.lang3.StringUtils;
@@ -44,6 +45,7 @@ public class LightingTimerTaskController {
     /**
      * 定时任务列表（分页）
      */
+    @ApiOperation("定时任务列表（分页）")
     @GetMapping("/listPage")
     public Result<IPage<LightingTimerTaskDto>> listPage(LightingTimerTaskDto query) {
         Page<LightingPlan> page = planService.page(
@@ -101,6 +103,7 @@ public class LightingTimerTaskController {
     /**
      * 新增定时任务
      */
+    @ApiOperation("新增定时任务")
     @PostMapping("/add")
     public Result<String> add(@RequestBody LightingTimerTaskDto dto) {
         LightingPlan plan = new LightingPlan();
@@ -132,6 +135,7 @@ public class LightingTimerTaskController {
     /**
      * 编辑定时任务
      */
+    @ApiOperation("编辑定时任务")
     @PostMapping("/edit")
     public Result<String> edit(@RequestBody LightingTimerTaskDto dto) {
         LightingPlan plan = planService.getById(dto.getId());
@@ -170,6 +174,7 @@ public class LightingTimerTaskController {
     /**
      * 启用定时任务
      */
+    @ApiOperation("启用定时任务")
     @PostMapping("/enable")
     public Result<String> enable(@RequestParam Long id) {
         LightingPlan plan = planService.getById(id);
@@ -187,6 +192,7 @@ public class LightingTimerTaskController {
     /**
      * 停用定时任务
      */
+    @ApiOperation("停用定时任务")
     @PostMapping("/disable")
     public Result<String> disable(@RequestParam Long id) {
         planService.disable(id);
@@ -196,6 +202,7 @@ public class LightingTimerTaskController {
     /**
      * 删除定时任务
      */
+    @ApiOperation("删除定时任务")
     @PostMapping("/delete")
     public Result<String> delete(@RequestParam Long id) {
         executionTimeService.remove(
@@ -209,6 +216,7 @@ public class LightingTimerTaskController {
     /**
      * 定时任务详情
      */
+    @ApiOperation("定时任务详情")
     @GetMapping("/detail")
     public Result<LightingTimerTaskDto> detail(@RequestParam Long id) {
         LightingPlan plan = planService.getById(id);
