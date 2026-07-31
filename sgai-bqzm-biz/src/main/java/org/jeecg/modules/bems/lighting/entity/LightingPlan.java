@@ -97,6 +97,11 @@ public class LightingPlan extends BaseEntity {
     private String remark;
 
     /**
+     * 关联的定时任务ID（schedule_job.id），为空表示由照明计划页面创建
+     */
+    private Long scheduleJobId;
+
+    /**
      * 计划执行信息
      */
     @TableField(exist = false)

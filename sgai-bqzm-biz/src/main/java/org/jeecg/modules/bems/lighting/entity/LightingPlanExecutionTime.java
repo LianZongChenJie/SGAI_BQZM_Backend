@@ -4,6 +4,7 @@ import com.baomidou.mybatisplus.annotation.IdType;
 import com.baomidou.mybatisplus.annotation.TableId;
 import com.baomidou.mybatisplus.annotation.TableName;
 import lombok.Data;
+import org.springframework.util.StringUtils;
 
 import java.time.LocalDate;
 import java.time.LocalTime;
@@ -38,14 +39,23 @@ public class LightingPlanExecutionTime {
     private String version;
 
     public LocalDate getStartLocalDate(){
+        if(StringUtils.isEmpty(startDate)){
+            return null;
+        }
         return LocalDate.parse(startDate, DATE_FORMATTER);
     }
 
     public LocalDate getEndLocalDate(){
+        if(StringUtils.isEmpty(endDate)){
+            return null;
+        }
         return LocalDate.parse(endDate, DATE_FORMATTER);
     }
 
     public LocalTime getExecutionLocalTime(){
+        if(StringUtils.isEmpty(executionTime)){
+            return null;
+        }
         return LocalTime.parse(executionTime, TIME_FORMATTER);
     }
 }

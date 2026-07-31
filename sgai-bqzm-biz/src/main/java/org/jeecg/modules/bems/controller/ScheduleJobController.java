@@ -11,6 +11,7 @@ import org.apache.commons.lang3.StringUtils;
 import org.jeecg.common.api.vo.Result;
 import org.jeecg.modules.bems.entity.ScheduleJob;
 import org.jeecg.modules.bems.job.DynamicScheduleManager;
+import org.jeecg.modules.bems.lighting.service.ILightingPlanService;
 import org.jeecg.modules.bems.service.IScheduleJobService;
 import org.springframework.web.bind.annotation.*;
 
@@ -22,6 +23,9 @@ import java.util.List;
  *
  * 前端页面通过此接口添加/修改/启停定时任务（包括灯光控制任务），
  * 后台自动到点执行开灯/关灯。
+ *
+ * 灯光控制任务在新增/编辑时，会同步到照明计划表（lighting_plan + lighting_plan_execution_time），
+ * 保证 /bems/lighting/plan/listPage 计划列表能看到这些定时任务。
  *
  * 灯光控制示例（用户友好时间配置，与照明计划接口一致）：
  *   POST /bems/scheduleJob/add
@@ -78,6 +82,8 @@ public class ScheduleJobController {
     private final IScheduleJobService scheduleJobService;
 
     private final DynamicScheduleManager dynamicScheduleManager;
+
+    private final ILightingPlanService lightingPlanService;
 
     /** 合法的周期类型 */
     private static final List<String> VALID_CYCLE_TYPES = Arrays.asList("每天", "工作日", "周末", "自定义");
@@ -219,8 +225,17 @@ public class ScheduleJobController {
                 scheduleJobService.start(scheduleJob.getId());
             } catch (Exception e) {
                 log.error("定时任务添加成功但注册失败: {}", e.getMessage());
+                // 同步计划状态回禁用，避免与调度器实际状态不一致
+                lightingPlanService.syncStatusFromScheduleJob(scheduleJob.getId(), 0);
                 return Result.error("定时任务已保存，但注册到调度器失败: " + e.getMessage());
             }
+        }
+
+        // 同步到照明计划表（lighting_plan + lighting_plan_execution_time），保证计划列表可查
+        try {
+            lightingPlanService.syncFromScheduleJob(scheduleJob);
+        } catch (Exception e) {
+            log.error("定时任务同步到照明计划表失败: {}", e.getMessage());
         }
 
         return Result.ok("添加成功");
@@ -259,6 +274,13 @@ public class ScheduleJobController {
             scheduleJobService.stop(scheduleJob.getId());
         }
 
+        // 同步到照明计划表
+        try {
+            lightingPlanService.syncFromScheduleJob(scheduleJobService.getById(scheduleJob.getId()));
+        } catch (Exception e) {
+            log.error("定时任务同步到照明计划表失败: {}", e.getMessage());
+        }
+
         return Result.ok("更新成功");
     }
 
@@ -266,10 +288,15 @@ public class ScheduleJobController {
      * 删除定时任务
      */
     @DeleteMapping("/delete")
-    @ApiOperation(value = "删除定时任务", notes = "删除定时任务，并从调度器中移除")
+    @ApiOperation(value = "删除定时任务", notes = "删除定时任务，并从调度器中移除，同时删除同步的照明计划")
     public Result<String> delete(@RequestParam(name = "id") Long id) {
-        scheduleJobService.stop(id);
-        scheduleJobService.removeById(id);
+        // 任务可能已被计划接口先删除，判空避免 stop 抛异常
+        if (scheduleJobService.getById(id) != null) {
+            scheduleJobService.stop(id);
+            scheduleJobService.removeById(id);
+        }
+        // 删除同步的照明计划
+        lightingPlanService.removeByScheduleJobId(id);
         return Result.ok("删除成功");
     }
 
@@ -282,8 +309,11 @@ public class ScheduleJobController {
         List<String> idList = Arrays.asList(ids.split(","));
         for (String id : idList) {
             Long jobId = Long.parseLong(id);
-            scheduleJobService.stop(jobId);
-            scheduleJobService.removeById(jobId);
+            if (scheduleJobService.getById(jobId) != null) {
+                scheduleJobService.stop(jobId);
+                scheduleJobService.removeById(jobId);
+            }
+            lightingPlanService.removeByScheduleJobId(jobId);
         }
         return Result.ok("批量删除成功");
     }
@@ -292,9 +322,10 @@ public class ScheduleJobController {
      * 启用定时任务
      */
     @PostMapping("/start/{id}")
-    @ApiOperation(value = "启用定时任务", notes = "启用指定定时任务，注册到调度器")
+    @ApiOperation(value = "启用定时任务", notes = "启用指定定时任务，注册到调度器，并同步照明计划状态")
     public Result<String> start(@PathVariable Long id) {
         scheduleJobService.start(id);
+        lightingPlanService.syncStatusFromScheduleJob(id, 1);
         return Result.ok("启用成功");
     }
 
@@ -302,9 +333,10 @@ public class ScheduleJobController {
      * 停用定时任务
      */
     @PostMapping("/stop/{id}")
-    @ApiOperation(value = "停用定时任务", notes = "停用指定定时任务，从调度器移除")
+    @ApiOperation(value = "停用定时任务", notes = "停用指定定时任务，从调度器移除，并同步照明计划状态")
     public Result<String> stop(@PathVariable Long id) {
         scheduleJobService.stop(id);
+        lightingPlanService.syncStatusFromScheduleJob(id, 0);
         return Result.ok("停用成功");
     }
 
