@@ -7,9 +7,11 @@ import org.jeecg.modules.bems.alarm.entity.AlarmRecord;
 import org.jeecg.modules.bems.alarm.service.IAlarmRecordService;
 import org.jeecg.modules.bems.lighting.entity.LightingArea;
 import org.jeecg.modules.bems.lighting.entity.LightingCircuit;
+import org.jeecg.modules.bems.lighting.entity.LightingOperationLog;
 import org.jeecg.modules.bems.lighting.service.ILightingAreaService;
 import org.jeecg.modules.bems.lighting.service.ILightingCircuitService;
 import org.jeecg.modules.bems.lighting.service.ILightingHomeService;
+import org.jeecg.modules.bems.lighting.service.ILightingOperationLogService;
 import org.jeecg.modules.bems.lighting.service.LightingService;
 import org.jeecg.modules.bems.lighting.vo.AreaStatisticsVo;
 import org.jeecg.modules.bems.lighting.vo.EnergyStatisticsVo;
@@ -18,6 +20,7 @@ import org.springframework.stereotype.Service;
 
 import java.math.BigDecimal;
 import java.math.RoundingMode;
+import java.time.LocalDateTime;
 import java.util.List;
 
 /**
@@ -32,6 +35,7 @@ public class LightingHomeServiceImpl implements ILightingHomeService {
     private final ILightingCircuitService circuitService;
     private final IAlarmRecordService alarmRecordService;
     private final LightingService lightingService;
+    private final ILightingOperationLogService lightingOperationLogService;
 
     @Override
     public AreaStatisticsVo getAreaStatistics() {
@@ -124,6 +128,7 @@ public class LightingHomeServiceImpl implements ILightingHomeService {
         for (LightingArea area : list) {
             try {
                 lightingService.areaOpen(area.getSpace(), area.getAreaCode(), area.getOpenCode());
+                lightingOperationLogService.saveLog(LightingOperationLog.REL_TYPE_AREA, area.getId(), area.getAreaName(), LocalDateTime.now(), "区域全开");
             } catch (Exception e) {
                 log.error("一键全开-区域[{}]开启失败", area.getAreaName(), e);
             }
@@ -136,6 +141,7 @@ public class LightingHomeServiceImpl implements ILightingHomeService {
         for (LightingArea area : list) {
             try {
                 lightingService.areaClose(area.getSpace(), area.getAreaCode(), area.getCloseCode());
+                lightingOperationLogService.saveLog(LightingOperationLog.REL_TYPE_AREA, area.getId(), area.getAreaName(), LocalDateTime.now(), "区域全关");
             } catch (Exception e) {
                 log.error("一键全关-区域[{}]关闭失败", area.getAreaName(), e);
             }
