@@ -10,21 +10,24 @@ import lombok.Data;
 import lombok.extern.slf4j.Slf4j;
 import org.apache.commons.lang3.StringUtils;
 import org.jeecg.common.api.vo.Result;
+import org.jeecg.common.exception.JeecgBootException;
 import org.jeecg.modules.bems.entity.ScheduleJob;
+import org.jeecg.modules.bems.lighting.entity.LightingArea;
+import org.jeecg.modules.bems.lighting.entity.LightingCircuit;
 import org.jeecg.modules.bems.lighting.entity.LightingOperationLog;
 import org.jeecg.modules.bems.lighting.entity.LightingPlan;
 import org.jeecg.modules.bems.lighting.entity.LightingPlanExecutionTime;
+import org.jeecg.modules.bems.lighting.service.ILightingAreaService;
+import org.jeecg.modules.bems.lighting.service.ILightingCircuitService;
 import org.jeecg.modules.bems.lighting.service.ILightingOperationLogService;
 import org.jeecg.modules.bems.lighting.service.ILightingPlanExecutionTimeService;
 import org.jeecg.modules.bems.lighting.service.ILightingPlanService;
 import org.jeecg.modules.bems.service.IScheduleJobService;
-import org.springframework.scheduling.support.CronExpression;
 import org.springframework.web.bind.annotation.*;
 
 import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.time.LocalTime;
-import java.time.ZoneId;
 import java.time.YearMonth;
 import java.time.format.DateTimeFormatter;
 import java.util.*;
@@ -33,15 +36,16 @@ import java.util.stream.Collectors;
 /**
  * 控制日历
  *
- * 显示指定月份内：
- * 1. 照明计划（LightingPlan）的执行日期
- * 2. 历史控制日志（LightingOperationLog）
- * 3. 动态定时任务（ScheduleJob）的预计执行日期
+ * 显示指定月份内照明计划的执行情况（按日期）：
+ * 数据源与 /bems/lighting/plan/listPage 一致 —— 仅查 lighting_plan 照明计划表，
+ * 且只展示 status=启用 的计划（含定时任务同步出的计划）。
  *
  * 事件状态（status）判定：
  * - 未来日期（执行时间未到）→ 待执行
  * - 执行时间已过但当天无计划/定时器执行日志 → 待执行（未执行）
  * - 执行时间已过且当天有计划/定时器执行日志 → 已执行
+ *
+ * 注：执行日志不作为独立事件展示在日历上，通过详情接口 /detail 按日期查询。
  */
 @Api(tags = "照明-控制日历")
 @Slf4j
@@ -64,13 +68,16 @@ public class LightingCalendarController {
     private final ILightingPlanExecutionTimeService executionTimeService;
     private final ILightingOperationLogService lightingOperationLogService;
     private final IScheduleJobService scheduleJobService;
+    private final ILightingAreaService lightingAreaService;
+    private final ILightingCircuitService lightingCircuitService;
 
     /**
-     * 查询指定年月的日历事件
+     * 查询指定年月的日历事件（照明计划的执行情况，含待执行/已执行状态）
+     * 数据源与 /bems/lighting/plan/listPage 一致：仅查 lighting_plan 启用状态的计划
      * @param year 年份
      * @param month 月份 1-12
      */
-    @ApiOperation("查询指定年月的日历事件（含照明计划、历史日志、动态定时任务，含待执行/已执行状态）")
+    @ApiOperation("查询指定年月的日历事件（照明计划的执行情况，含待执行/已执行状态）")
     @GetMapping("/events")
     public Result<List<CalendarDayEvent>> events(@RequestParam int year, @RequestParam int month) {
         YearMonth yearMonth = YearMonth.of(year, month);
@@ -81,15 +88,12 @@ public class LightingCalendarController {
 
         Map<String, List<CalendarEvent>> dayEventMap = new HashMap<>();
 
-        // 1. 历史控制日志事件（同时构建“已执行”映射，供计划/定时任务判断状态）
-        List<LightingOperationLog> logs = loadOperationLogEvents(monthStartTime, monthEndTime, dayEventMap);
+        // 1. 查询当月控制日志，构建“已执行”映射（供计划判断状态），不作为独立事件展示
+        List<LightingOperationLog> logs = loadMonthLogs(monthStartTime, monthEndTime);
         Map<String, Set<Long>> executedRelIdsByDate = buildExecutedRelIdsByDate(logs);
 
-        // 2. 照明计划事件
+        // 2. 照明计划事件（与 plan/listPage 同源，仅启用状态）
         loadPlanEvents(monthStart, monthEnd, dayEventMap, executedRelIdsByDate);
-
-        // 3. 动态定时任务事件
-        loadScheduleJobEvents(monthStart, monthEnd, dayEventMap, executedRelIdsByDate);
 
         // 组装返回结果
         List<CalendarDayEvent> result = new ArrayList<>();
@@ -106,7 +110,161 @@ public class LightingCalendarController {
         return Result.ok(result);
     }
 
-    // ==================== 照明计划 ====================
+    /**
+     * 事件详情：点击日历事件后调用。
+     * - 当天有执行日志 → 返回执行日志列表（logs）
+     * - 当天无执行日志 → 返回要执行的区域/回路列表（targets）
+     *
+     * @param source 事件来源：PLAN-照明计划、SCHEDULE-动态定时任务（向后兼容）、LOG-历史日志
+     * @param planId 关联ID（PLAN=计划ID，SCHEDULE=任务ID，LOG=日志的relId）
+     * @param date 日期 yyyy-MM-dd，查询当天执行日志
+     */
+    @ApiOperation("日历事件详情（返回当天执行日志；无日志时返回要执行的区域/回路）")
+    @GetMapping("/detail")
+    public Result<CalendarEventDetail> detail(@RequestParam String source,
+                                              @RequestParam Long planId,
+                                              @RequestParam String date) {
+        CalendarEventDetail detail = new CalendarEventDetail();
+        detail.setSource(source);
+        detail.setPlanId(planId);
+        detail.setDate(date);
+
+        if ("LOG".equals(source)) {
+            // 历史日志事件：planId 即日志的 relId，直接查询当天该目标的日志
+            List<LightingOperationLog> logs = queryLogsByDateAndRelIds(date, Collections.singleton(planId));
+            detail.setLogs(logs);
+            detail.setStatus(logs.isEmpty() ? STATUS_PENDING : STATUS_EXECUTED);
+            if (!logs.isEmpty()) {
+                LightingOperationLog first = logs.get(0);
+                detail.setPlanName(first.getName());
+                detail.setRelType(first.getRelType());
+                detail.setOperationType(first.getOperationType());
+            }
+            return Result.ok(detail);
+        }
+
+        String relType;
+        String operationType;
+        String executionTime;
+        String planName;
+        Set<Long> relIds;
+
+        if ("PLAN".equals(source)) {
+            LightingPlan plan = planService.getById(planId);
+            if (plan == null) {
+                throw new JeecgBootException("计划不存在");
+            }
+            planName = plan.getPlanName();
+            relType = plan.getRelType();
+            operationType = plan.getOperationType();
+            // 执行时间取执行配置表，与日历列表口径一致
+            LightingPlanExecutionTime et = executionTimeService.getByPlanId(planId);
+            executionTime = et != null ? et.getExecutionTime() : plan.getExecutionTime();
+            relIds = parseRelIds(plan.getRelIds());
+        } else if ("SCHEDULE".equals(source)) {
+            // 向后兼容：历史客户端仍可能传 SCHEDULE 来源
+            ScheduleJob job = scheduleJobService.getById(planId);
+            if (job == null) {
+                throw new JeecgBootException("定时任务不存在");
+            }
+            planName = job.getJobName();
+            relType = resolveScheduleRelType(job);
+            operationType = getScheduleOperationType(job);
+            executionTime = job.getExecutionTime();
+            relIds = resolveJobTargetIds(job);
+        } else {
+            throw new JeecgBootException("source 必须为 PLAN/SCHEDULE/LOG");
+        }
+
+        detail.setPlanName(planName);
+        detail.setRelType(relType);
+        detail.setOperationType(operationType);
+        detail.setExecutionTime(executionTime);
+
+        // 查询当天执行日志
+        List<LightingOperationLog> logs = queryLogsByDateAndRelIds(date, relIds);
+        detail.setLogs(logs);
+        detail.setStatus(logs.isEmpty() ? STATUS_PENDING : STATUS_EXECUTED);
+
+        // 无执行日志时，返回要执行的区域/回路
+        if (logs.isEmpty() && !relIds.isEmpty()) {
+            detail.setTargets(buildTargets(relType, relIds));
+        }
+
+        return Result.ok(detail);
+    }
+
+    /**
+     * 查询指定日期内、目标ID集合上的执行日志（计划/定时器触发的控制记录）
+     */
+    private List<LightingOperationLog> queryLogsByDateAndRelIds(String date, Set<Long> relIds) {
+        if (relIds == null || relIds.isEmpty()) {
+            return Collections.emptyList();
+        }
+        LocalDate day;
+        try {
+            day = LocalDate.parse(date, DateTimeFormatter.ofPattern("yyyy-MM-dd"));
+        } catch (Exception e) {
+            throw new JeecgBootException("date 格式必须为 yyyy-MM-dd");
+        }
+        LocalDateTime start = day.atStartOfDay();
+        LocalDateTime end = day.plusDays(1).atStartOfDay().minusNanos(1);
+        return lightingOperationLogService.list(
+                new LambdaQueryWrapper<LightingOperationLog>()
+                        .ge(LightingOperationLog::getOperationTime, start)
+                        .le(LightingOperationLog::getOperationTime, end)
+                        .in(LightingOperationLog::getRelId, relIds)
+                        .orderByDesc(LightingOperationLog::getOperationTime));
+    }
+
+    /**
+     * 解析定时任务关联类型（兼容新版 relType=区域/回路 与旧版 controlType=AREA/CIRCUIT）
+     */
+    private String resolveScheduleRelType(ScheduleJob job) {
+        if ("区域".equals(job.getRelType()) || "AREA".equals(job.getControlType())) {
+            return "区域";
+        }
+        if ("回路".equals(job.getRelType()) || "CIRCUIT".equals(job.getControlType())) {
+            return "回路";
+        }
+        return job.getRelType();
+    }
+
+    /**
+     * 构建要执行的区域/回路目标列表
+     */
+    private List<CalendarTarget> buildTargets(String relType, Set<Long> relIds) {
+        List<CalendarTarget> targets = new ArrayList<>();
+        if (relIds == null || relIds.isEmpty()) {
+            return targets;
+        }
+        if ("区域".equals(relType)) {
+            List<LightingArea> areas = lightingAreaService.getByIds(relIds);
+            if (areas != null) {
+                for (LightingArea area : areas) {
+                    CalendarTarget target = new CalendarTarget();
+                    target.setRelId(area.getId());
+                    target.setRelName(area.getAreaName());
+                    target.setRelType("区域");
+                    targets.add(target);
+                }
+            }
+        } else if ("回路".equals(relType)) {
+            List<LightingCircuit> circuits = lightingCircuitService.listByIds(relIds);
+            if (circuits != null) {
+                for (LightingCircuit circuit : circuits) {
+                    CalendarTarget target = new CalendarTarget();
+                    target.setRelId(circuit.getId());
+                    target.setRelName(circuit.getCircuitName());
+                    target.setRelType("回路");
+                    targets.add(target);
+                }
+            }
+        }
+        return targets;
+    }
+
+    // ==================== 照明计划（与 /bems/lighting/plan/listPage 同源） ====================
 
     private void loadPlanEvents(LocalDate monthStart, LocalDate monthEnd,
                                  Map<String, List<CalendarEvent>> dayEventMap,
@@ -114,6 +272,7 @@ public class LightingCalendarController {
         List<LightingPlan> enabledPlans = planService.list(
                 new LambdaQueryWrapper<LightingPlan>()
                         .eq(LightingPlan::getStatus, LightingPlan.STATUS_ENABLE)
+                        .orderByAsc(LightingPlan::getSort)
         );
 
         if (enabledPlans.isEmpty()) return;
@@ -179,37 +338,19 @@ public class LightingCalendarController {
         }
     }
 
-    // ==================== 历史控制日志 ====================
+    // ==================== 控制日志（仅用于状态判定，不作为日历事件） ====================
 
-    private List<LightingOperationLog> loadOperationLogEvents(LocalDateTime monthStart, LocalDateTime monthEnd,
-                                        Map<String, List<CalendarEvent>> dayEventMap) {
-        List<LightingOperationLog> logs = lightingOperationLogService.list(
+    /**
+     * 查询指定月份的当月控制日志，供 buildExecutedRelIdsByDate 判断“已执行”状态。
+     * 执行日志不作为独立事件展示在日历上，详情请调用 /detail 接口。
+     */
+    private List<LightingOperationLog> loadMonthLogs(LocalDateTime monthStart, LocalDateTime monthEnd) {
+        return lightingOperationLogService.list(
                 new LambdaQueryWrapper<LightingOperationLog>()
                         .ge(LightingOperationLog::getOperationTime, monthStart)
                         .le(LightingOperationLog::getOperationTime, monthEnd)
                         .orderByDesc(LightingOperationLog::getOperationTime)
         );
-
-        DateTimeFormatter df = DateTimeFormatter.ofPattern("yyyy-MM-dd");
-        DateTimeFormatter tf = DateTimeFormatter.ofPattern("HH:mm:ss");
-
-        for (LightingOperationLog logEntry : logs) {
-            String dateKey = logEntry.getOperationTime().toLocalDate().format(df);
-            String timeStr = logEntry.getOperationTime().format(tf);
-
-            CalendarEvent event = new CalendarEvent();
-            event.setSource("LOG");
-            event.setPlanId(logEntry.getRelId());
-            event.setPlanName(logEntry.getName());
-            event.setLabel(timeStr + " " + logEntry.getOperationType() + " [" + logEntry.getOperationBy() + "]");
-            event.setColor("gray");
-            event.setPlanType("历史记录");
-            event.setOperationType(logEntry.getOperationType());
-            event.setStatus(STATUS_EXECUTED);
-
-            dayEventMap.computeIfAbsent(dateKey, k -> new ArrayList<>()).add(event);
-        }
-        return logs;
     }
 
     /**
@@ -301,133 +442,9 @@ public class LightingCalendarController {
         return false;
     }
 
-    // ==================== 动态定时任务 ====================
-
-    private void loadScheduleJobEvents(LocalDate monthStart, LocalDate monthEnd,
-                                       Map<String, List<CalendarEvent>> dayEventMap,
-                                       Map<String, Set<Long>> executedRelIdsByDate) {
-        List<ScheduleJob> enabledJobs = scheduleJobService.list(
-                new LambdaQueryWrapper<ScheduleJob>()
-                        .eq(ScheduleJob::getStatus, 1)
-        );
-
-        if (enabledJobs.isEmpty()) return;
-
-        DateTimeFormatter df = DateTimeFormatter.ofPattern("yyyy-MM-dd");
-
-        for (ScheduleJob job : enabledJobs) {
-            Set<Long> jobTargetIds = resolveJobTargetIds(job);
-
-            // 1. nextRunTime 事件（未来）
-            if (job.getNextRunTime() != null) {
-                LocalDate nextDate = job.getNextRunTime().toInstant()
-                        .atZone(ZoneId.systemDefault()).toLocalDate();
-                if (!nextDate.isBefore(monthStart) && !nextDate.isAfter(monthEnd)) {
-                    String dateKey = nextDate.format(df);
-                    String timeStr = job.getNextRunTime().toInstant()
-                            .atZone(ZoneId.systemDefault()).toLocalTime()
-                            .format(DateTimeFormatter.ofPattern("HH:mm:ss"));
-
-                    addScheduleEvent(dayEventMap, dateKey, timeStr, job, STATUS_PENDING);
-                }
-            }
-
-            // 2. lastRunTime 事件（历史）
-            if (job.getLastRunTime() != null) {
-                LocalDate lastDate = job.getLastRunTime().toInstant()
-                        .atZone(ZoneId.systemDefault()).toLocalDate();
-                if (!lastDate.isBefore(monthStart) && !lastDate.isAfter(monthEnd)) {
-                    String dateKey = lastDate.format(df);
-                    boolean alreadyAdded = dayEventMap.getOrDefault(dateKey, Collections.emptyList())
-                            .stream().anyMatch(e ->
-                                    e.getSource().equals("SCHEDULE") &&
-                                    Objects.equals(e.getPlanId(), job.getId()));
-
-                    if (!alreadyAdded) {
-                        String timeStr = job.getLastRunTime().toInstant()
-                                .atZone(ZoneId.systemDefault()).toLocalTime()
-                                .format(DateTimeFormatter.ofPattern("HH:mm:ss"));
-
-                        CalendarEvent event = buildScheduleEvent(job, timeStr);
-                        event.setLabel(timeStr + " " + getScheduleActionLabel(job) + " [已执行]");
-                        event.setStatus(STATUS_EXECUTED);
-                        dayEventMap.computeIfAbsent(dateKey, k -> new ArrayList<>()).add(event);
-                    }
-                }
-            }
-
-            // 3. 通过 CronExpression.next() 推算当月内所有执行日期
-            try {
-                if (job.getCronExpression() != null) {
-                    CronExpression cronExpr = CronExpression.parse(job.getCronExpression());
-                    LocalDateTime cursor = monthStart.atStartOfDay();
-                    while (cursor != null && !cursor.toLocalDate().isAfter(monthEnd)) {
-                        cursor = cronExpr.next(cursor);
-                        if (cursor != null && !cursor.toLocalDate().isAfter(monthEnd)) {
-                            String dateKey = cursor.toLocalDate().format(df);
-                            String timeStr = cursor.toLocalTime()
-                                    .format(DateTimeFormatter.ofPattern("HH:mm:ss"));
-
-                            String status = resolveStatus(cursor.toLocalDate(), cursor.toLocalTime(),
-                                    executedRelIdsByDate, jobTargetIds);
-                            addScheduleEvent(dayEventMap, dateKey, timeStr, job, status);
-
-                            cursor = cursor.plusNanos(1); // 推进 nanosecond，避免死循环
-                        }
-                    }
-                }
-            } catch (Exception e) {
-                log.warn("解析定时任务cron表达式失败, jobId={}, cron={}", job.getId(), job.getCronExpression());
-            }
-        }
-    }
-
-    /** 添加 Schedule 事件（去重） */
-    private void addScheduleEvent(Map<String, List<CalendarEvent>> dayEventMap,
-                                   String dateKey, String timeStr, ScheduleJob job, String status) {
-        boolean alreadyExists = dayEventMap.getOrDefault(dateKey, Collections.emptyList())
-                .stream().anyMatch(e ->
-                        e.getSource().equals("SCHEDULE") &&
-                        e.getLabel() != null &&
-                        e.getLabel().contains(timeStr) &&
-                        Objects.equals(e.getPlanId(), job.getId()));
-
-        if (!alreadyExists) {
-            CalendarEvent event = buildScheduleEvent(job, timeStr);
-            event.setStatus(status);
-            dayEventMap.computeIfAbsent(dateKey, k -> new ArrayList<>()).add(event);
-        }
-    }
-
-    /** 构建 Schedule 日历事件 */
-    private CalendarEvent buildScheduleEvent(ScheduleJob job, String timeStr) {
-        CalendarEvent event = new CalendarEvent();
-        event.setSource("SCHEDULE");
-        event.setPlanId(job.getId());
-        event.setPlanName(job.getJobName());
-        event.setLabel(timeStr + " " + getScheduleActionLabel(job));
-        event.setColor("orange");
-        event.setPlanType("动态任务");
-        event.setOperationType(getScheduleOperationType(job));
-        return event;
-    }
-
     /**
-     * 任务行为标签
-     * 兼容两种任务格式：
-     * - 新版：relType=区域/回路 + relIds（ScheduleJobController 新增时的默认写法）
-     * - 旧版：controlType=AREA/CIRCUIT + targetId
+     * 兼容旧定时任务的描述（向后兼容，供详情接口 SCHEDULE 来源使用）
      */
-    private String getScheduleActionLabel(ScheduleJob job) {
-        if ("AREA".equals(job.getControlType()) || "区域".equals(job.getRelType())) {
-            return "OPEN".equals(job.getOperationType()) ? "区域开灯" : "区域关灯";
-        }
-        if ("CIRCUIT".equals(job.getControlType()) || "回路".equals(job.getRelType())) {
-            return "OPEN".equals(job.getOperationType()) ? "回路开灯" : "回路关灯";
-        }
-        return job.getBeanName() + "." + job.getMethodName();
-    }
-
     private String getScheduleOperationType(ScheduleJob job) {
         if ("AREA".equals(job.getControlType()) || "CIRCUIT".equals(job.getControlType())
                 || "区域".equals(job.getRelType()) || "回路".equals(job.getRelType())) {
@@ -452,7 +469,7 @@ public class LightingCalendarController {
     @Data
     @ApiModel("日历事件")
     public static class CalendarEvent {
-        @ApiModelProperty("来源：PLAN-照明计划 LOG-历史日志 SCHEDULE-动态任务")
+        @ApiModelProperty("来源：PLAN-照明计划")
         private String source;
         @ApiModelProperty("关联ID")
         private Long planId;
@@ -460,7 +477,7 @@ public class LightingCalendarController {
         private String planName;
         @ApiModelProperty("事件标签（时间+操作）")
         private String label;
-        @ApiModelProperty("颜色标识：blue=计划 green=节日 gray=历史 orange=动态任务")
+        @ApiModelProperty("颜色标识：blue=计划 green=节日")
         private String color;
         @ApiModelProperty("计划类型/来源描述")
         private String planType;
@@ -468,5 +485,41 @@ public class LightingCalendarController {
         private String operationType;
         @ApiModelProperty("状态：待执行/已执行")
         private String status;
+    }
+
+    @Data
+    @ApiModel("日历事件详情")
+    public static class CalendarEventDetail {
+        @ApiModelProperty("来源：PLAN-照明计划 SCHEDULE-动态任务 LOG-历史日志")
+        private String source;
+        @ApiModelProperty("关联ID")
+        private Long planId;
+        @ApiModelProperty("日期 yyyy-MM-dd")
+        private String date;
+        @ApiModelProperty("名称")
+        private String planName;
+        @ApiModelProperty("关联类型：区域、回路")
+        private String relType;
+        @ApiModelProperty("操作类型：开启/关闭/执行")
+        private String operationType;
+        @ApiModelProperty("计划执行时间 HH:mm:ss")
+        private String executionTime;
+        @ApiModelProperty("状态：待执行/已执行")
+        private String status;
+        @ApiModelProperty("执行日志列表（当天有执行记录时返回）")
+        private List<LightingOperationLog> logs;
+        @ApiModelProperty("执行目标列表（当天无执行日志时返回，要执行的区域/回路）")
+        private List<CalendarTarget> targets;
+    }
+
+    @Data
+    @ApiModel("日历事件目标")
+    public static class CalendarTarget {
+        @ApiModelProperty("目标ID")
+        private Long relId;
+        @ApiModelProperty("目标名称")
+        private String relName;
+        @ApiModelProperty("目标类型：区域、回路")
+        private String relType;
     }
 }

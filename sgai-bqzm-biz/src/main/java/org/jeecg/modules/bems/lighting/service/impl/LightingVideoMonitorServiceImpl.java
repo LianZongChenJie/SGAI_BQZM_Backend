@@ -33,4 +33,13 @@ public class LightingVideoMonitorServiceImpl extends ServiceImpl<LightingVideoMo
                 .eq(LightingVideoMonitor::getAreaId, areaId)
                 .orderByAsc(LightingVideoMonitor::getSort));
     }
+
+    /**
+     * 覆盖 IService.list()：按 sort 升序返回全部视频（设备监控页卡片顺序稳定）
+     */
+    @Override
+    public List<LightingVideoMonitor> list() {
+        return super.list(new LambdaQueryWrapper<LightingVideoMonitor>()
+                .orderByAsc(LightingVideoMonitor::getSort));
+    }
 }

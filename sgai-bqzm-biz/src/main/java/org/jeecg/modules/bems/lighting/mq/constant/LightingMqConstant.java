@@ -25,7 +25,8 @@ public class LightingMqConstant {
     /**
      * 照明状态反馈队列
      */
-    public static final String QUEUE_LIGHTING_LISTENER = "lighting_data";
+//    public static final String QUEUE_LIGHTING_LISTENER = "lighting_data";
+    public static final String QUEUE_LIGHTING_LISTENER = "lighting_data_test";
 
     /**
      * 照明计划控制队列（延迟消息）
