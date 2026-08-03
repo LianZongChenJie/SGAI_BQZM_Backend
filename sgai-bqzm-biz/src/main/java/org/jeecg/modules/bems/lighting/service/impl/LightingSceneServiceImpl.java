@@ -275,22 +275,21 @@ public class LightingSceneServiceImpl extends ServiceImpl<LightingSceneMapper, L
     /**
      * 兼容前端现用入参：planName + relType + relIds + operationType 自动转换为明细列表。
      * 已传 details 明细列表时不做转换。
+     * operationType 可不传：为空时默认"开启"（场景用于一键开灯，缺省按开灯处理）。
      */
     private void convertParams(LightingSceneDto dto) {
         if (CollectionUtil.isNotEmpty(dto.getDetails())) {
+            // 明细列表格式：每条明细 operationType 为空时默认"开启"
+            for (LightingSceneDetail detail : dto.getDetails()) {
+                detail.setOperationType(resolveOperationType(detail.getOperationType()));
+            }
             return;
         }
         if (StringUtils.isEmpty(dto.getRelIds())) {
             return;
         }
-        // 操作类型兼容：开启/关闭 或 OPEN/CLOSE（与 LightingPlanServiceImpl.control 一致）
-        String op = dto.getOperationType();
-        if ("OPEN".equalsIgnoreCase(op)) {
-            op = LightingScene.OPERATION_TYPE_OPEN;
-        } else if ("CLOSE".equalsIgnoreCase(op)) {
-            op = LightingScene.OPERATION_TYPE_CLOSE;
-        }
-        dto.setOperationType(op);
+        // 操作类型兼容：开启/关闭 或 OPEN/CLOSE（与 LightingPlanServiceImpl.control 一致），为空默认"开启"
+        dto.setOperationType(resolveOperationType(dto.getOperationType()));
 
         List<LightingSceneDetail> details = new ArrayList<>();
         String[] ids = dto.getRelIds().split(",");
@@ -316,6 +315,22 @@ public class LightingSceneServiceImpl extends ServiceImpl<LightingSceneMapper, L
             throw new JeecgBootException("relIds 不能为空");
         }
         dto.setDetails(details);
+    }
+
+    /**
+     * 解析操作类型：开启/关闭 或 OPEN/CLOSE，空值默认"开启"
+     */
+    private String resolveOperationType(String operationType) {
+        if (StringUtils.isEmpty(operationType)) {
+            return LightingScene.OPERATION_TYPE_OPEN;
+        }
+        if ("OPEN".equalsIgnoreCase(operationType)) {
+            return LightingScene.OPERATION_TYPE_OPEN;
+        }
+        if ("CLOSE".equalsIgnoreCase(operationType)) {
+            return LightingScene.OPERATION_TYPE_CLOSE;
+        }
+        return operationType;
     }
 
     /**

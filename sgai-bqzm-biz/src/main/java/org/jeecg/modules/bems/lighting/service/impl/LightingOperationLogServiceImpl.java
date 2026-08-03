@@ -48,6 +48,8 @@ public class LightingOperationLogServiceImpl extends ServiceImpl<LightingOperati
     public IPage<LightingOperationLog> listPage(LightingOperationLogQueryDto params) {
         return page(new Page<>(params.getPageNo(), params.getPageSize()), new LambdaQueryWrapper<LightingOperationLog>()
                 .eq(StrUtil.isNotEmpty(params.getRelType()), LightingOperationLog::getRelType, params.getRelType())
+                // 操作类型模糊匹配：开/关（兼容 区域全开/回路开启/区域全关/回路关闭 等写法）
+                .like(StrUtil.isNotEmpty(params.getOperationType()), LightingOperationLog::getOperationType, params.getOperationType())
                 .ge(params.getStartTime() != null, LightingOperationLog::getOperationTime, params.getStartTime())
                 .le(params.getEndTime() != null, LightingOperationLog::getOperationTime, params.getEndTime())
                 .orderByDesc(LightingOperationLog::getOperationTime));
