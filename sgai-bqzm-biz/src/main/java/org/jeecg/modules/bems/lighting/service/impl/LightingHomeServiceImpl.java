@@ -3,8 +3,6 @@ package org.jeecg.modules.bems.lighting.service.impl;
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import lombok.AllArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
-import org.jeecg.modules.bems.alarm.entity.AlarmRecord;
-import org.jeecg.modules.bems.alarm.service.IAlarmRecordService;
 import org.jeecg.modules.bems.lighting.entity.LightingArea;
 import org.jeecg.modules.bems.lighting.entity.LightingCircuit;
 import org.jeecg.modules.bems.lighting.entity.LightingOperationLog;
@@ -33,7 +31,6 @@ public class LightingHomeServiceImpl implements ILightingHomeService {
 
     private final ILightingAreaService areaService;
     private final ILightingCircuitService circuitService;
-    private final IAlarmRecordService alarmRecordService;
     private final LightingService lightingService;
     private final ILightingOperationLogService lightingOperationLogService;
 
@@ -41,15 +38,24 @@ public class LightingHomeServiceImpl implements ILightingHomeService {
     public AreaStatisticsVo getAreaStatistics() {
         AreaStatisticsVo vo = new AreaStatisticsVo();
         List<LightingArea> list = areaService.list();
-        long total = list.size();
-        // 已覆盖：有回路且在线数 > 0 的地块
+        // 按空间名称（spaceName）去重统计地块数量，同一地块下的多条区域记录不重复计数
+        long total = list.stream()
+                .map(LightingArea::getSpaceName)
+                .filter(name -> name != null && !name.isEmpty())
+                .distinct()
+                .count();
+        // 已覆盖：按空间名称去重后，存在回路数 > 0 的地块数
         long covered = list.stream()
                 .filter(area -> area.getCircuitCount() != null && area.getCircuitCount() > 0)
+                .map(LightingArea::getSpaceName)
+                .filter(name -> name != null && !name.isEmpty())
+                .distinct()
                 .count();
 
         vo.setTotalCount(total);
         vo.setCoveredCount(covered);
         vo.setCoverageRate(calcPercentage(covered, total));
+        vo.setCoverageRate(BigDecimal.valueOf(Long.parseLong("100")));
         return vo;
     }
 
@@ -106,11 +112,6 @@ public class LightingHomeServiceImpl implements ILightingHomeService {
         return vo;
     }
 
-    @Override
-    public Long getPendingAlarmCount() {
-        return alarmRecordService.count(new LambdaQueryWrapper<AlarmRecord>()
-                .eq(AlarmRecord::getAlarmStatus, AlarmRecord.ALARM_STATUS_UNTREATED));
-    }
 
     @Override
     public List<LightingArea> getAreaRunStatus(String space) {

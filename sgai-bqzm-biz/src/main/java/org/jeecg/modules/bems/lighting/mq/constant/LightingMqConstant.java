@@ -31,26 +31,26 @@ public class LightingMqConstant {
     /**
      * 照明计划控制队列（延迟消息）
      */
-    public static final String QUEUE_LIGHTING_PLAN = "lighting_plan_execution";
+    public static final String QUEUE_LIGHTING_PLAN = "bqzm_lighting_plan_execution";
 
     /**
      * 照明计划控制路由（延迟消息）
      */
-    public static final String ROUTING_KEY_LIGHTING_PLAN = "plan_execution";
+    public static final String ROUTING_KEY_LIGHTING_PLAN = "bqzm_plan_execution";
 
     /**
      * 照明计划控制交换机（延迟消息）
      */
-    public static final String EXCHANGE_LIGHTING_PLAN = "lighting_plan_exchange";
+    public static final String EXCHANGE_LIGHTING_PLAN = "bqzm_lighting_plan_exchange";
 
     /**
      * 回路通讯状态队列
      */
-    public static final String QUEUE_LIGHTING_CIRCUIT_COMSTAT = "lighting_circuit_comstat";
+    public static final String QUEUE_LIGHTING_CIRCUIT_COMSTAT = "bqzm_lighting_circuit_comstat";
 
     /**
      * 回路通讯状态路由
      */
-    public static final String ROUTING_KEY_LIGHTING_COMSTAT = "comstat_execution";
+    public static final String ROUTING_KEY_LIGHTING_COMSTAT = "bqzm_comstat_execution";
 
 }

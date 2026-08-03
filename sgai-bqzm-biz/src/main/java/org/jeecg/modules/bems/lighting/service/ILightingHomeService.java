@@ -28,11 +28,6 @@ public interface ILightingHomeService {
     EnergyStatisticsVo getEnergyStatistics();
 
     /**
-     * 待处理警报数量
-     */
-    Long getPendingAlarmCount();
-
-    /**
      * 地块运行状态列表
      */
     List<LightingArea> getAreaRunStatus(String space);

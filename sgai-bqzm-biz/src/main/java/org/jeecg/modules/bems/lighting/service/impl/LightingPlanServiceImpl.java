@@ -8,7 +8,6 @@ import com.baomidou.mybatisplus.extension.service.impl.ServiceImpl;
 import lombok.AllArgsConstructor;
 import org.apache.commons.lang3.StringUtils;
 import org.jeecg.common.exception.JeecgBootException;
-import org.jeecg.modules.bems.entity.ScheduleJob;
 import org.jeecg.modules.bems.lighting.dto.LightingPlanDetailDto;
 import org.jeecg.modules.bems.lighting.dto.LightingPlanQueryDto;
 import org.jeecg.modules.bems.lighting.entity.LightingArea;
@@ -18,7 +17,6 @@ import org.jeecg.modules.bems.lighting.entity.LightingPlanExecutionTime;
 import org.jeecg.modules.bems.lighting.mapper.LightingPlanMapper;
 import org.jeecg.modules.bems.lighting.mq.send.LightingSendService;
 import org.jeecg.modules.bems.lighting.service.*;
-import org.jeecg.modules.bems.service.IScheduleJobService;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -42,7 +40,6 @@ public class LightingPlanServiceImpl extends ServiceImpl<LightingPlanMapper, Lig
 
     private final ILightingPlanExecutionTimeService executionTimeService;
 
-    private final IScheduleJobService scheduleJobService;
 
     @Override
     public IPage<LightingPlan> listPage(LightingPlanQueryDto param) {
@@ -105,10 +102,10 @@ public class LightingPlanServiceImpl extends ServiceImpl<LightingPlanMapper, Lig
         if(plan != null && plan.getScheduleJobId() != null){
             Long jobId = plan.getScheduleJobId();
             // 任务可能已被定时任务接口先删除，判空避免 stop 抛异常阻断计划删除
-            if(scheduleJobService.getById(jobId) != null){
-                scheduleJobService.stop(jobId);
-                scheduleJobService.removeById(jobId);
-            }
+//            if(scheduleJobService.getById(jobId) != null){
+//                scheduleJobService.stop(jobId);
+//                scheduleJobService.removeById(jobId);
+//            }
         }
         // 同步删除执行时间配置，避免孤儿数据
         executionTimeService.remove(new LambdaQueryWrapper<LightingPlanExecutionTime>().eq(LightingPlanExecutionTime::getPlanId, id));
@@ -163,7 +160,7 @@ public class LightingPlanServiceImpl extends ServiceImpl<LightingPlanMapper, Lig
         }
         // 定时任务同步的计划：委托给动态调度器启用，避免老引擎MQ与新调度器双重执行
         if(plan.getScheduleJobId() != null){
-            scheduleJobService.start(plan.getScheduleJobId());
+//            scheduleJobService.start(plan.getScheduleJobId());
             return;
         }
         plan.setStatus(LightingPlan.STATUS_ENABLE);
@@ -193,7 +190,7 @@ public class LightingPlanServiceImpl extends ServiceImpl<LightingPlanMapper, Lig
         }
         // 定时任务同步的计划：委托给动态调度器停用，避免数据不一致
         if(plan.getScheduleJobId() != null){
-            scheduleJobService.stop(plan.getScheduleJobId());
+//            scheduleJobService.stop(plan.getScheduleJobId());
             return;
         }
         if(LightingPlan.STATUS_DISABLE.equals(plan.getStatus())){
@@ -298,7 +295,7 @@ public class LightingPlanServiceImpl extends ServiceImpl<LightingPlanMapper, Lig
         }
         // 定时任务同步的计划：委托给动态调度器立即执行，避免双重执行
         if(plan.getScheduleJobId() != null){
-            scheduleJobService.executeOnce(plan.getScheduleJobId());
+//            scheduleJobService.executeOnce(plan.getScheduleJobId());
             return;
         }
         Set<Long> relIds = Arrays.stream(plan.getRelIds().split(",")).map(Long::parseLong).collect(Collectors.toSet());
@@ -311,86 +308,9 @@ public class LightingPlanServiceImpl extends ServiceImpl<LightingPlanMapper, Lig
         }
     }
 
-    @Override
-    @Transactional
-    public void syncFromScheduleJob(ScheduleJob job) {
-        if(job == null || job.getId() == null){
-            return;
-        }
-        // 仅灯光控制类任务同步（区域/回路），通用反射任务不处理
-        boolean isArea = LightingPlan.REL_TYPE_AREA.equals(job.getRelType()) || "AREA".equals(job.getControlType());
-        boolean isCircuit = LightingPlan.REL_TYPE_CIRCUIT.equals(job.getRelType()) || "CIRCUIT".equals(job.getControlType());
-        if(!isArea && !isCircuit){
-            return;
-        }
-        // 关联ID：优先 relIds，回退 targetId（兼容旧写法）
-        String relIds = job.getRelIds();
-        if(StringUtils.isEmpty(relIds) && job.getTargetId() != null){
-            relIds = String.valueOf(job.getTargetId());
-        }
-        if(StringUtils.isEmpty(relIds)){
-            return;
-        }
 
-        // 查询是否已同步过的计划
-        LightingPlan plan = super.getOne(new LambdaQueryWrapper<LightingPlan>().eq(LightingPlan::getScheduleJobId, job.getId()));
-        boolean isNew = (plan == null);
-        if(isNew){
-            plan = new LightingPlan();
-            plan.setScheduleJobId(job.getId());
-            plan.setSort(getMaxSort() + 1);
-        }
-        plan.setPlanName(job.getJobName());
-        plan.setRelType(isArea ? LightingPlan.REL_TYPE_AREA : LightingPlan.REL_TYPE_CIRCUIT);
-        plan.setRelIds(relIds);
-        plan.setExecutionTime(job.getExecutionTime());
-        plan.setOperationType("OPEN".equals(job.getOperationType()) ? LightingPlan.OPERATION_TYPE_OPEN : LightingPlan.OPERATION_TYPE_CLOSE);
-        plan.setPlanType(job.getPlanType());
-        plan.setCycleType(job.getCycleType());
-        plan.setRemark(job.getRemark());
-        plan.setStatus(job.getStatus() != null && job.getStatus() == 1 ? LightingPlan.STATUS_ENABLE : LightingPlan.STATUS_DISABLE);
-        if(isNew){
-            super.save(plan);
-        }else{
-            super.updateById(plan);
-        }
 
-        // 同步执行时间配置（保证列表 executionInfo 展示）
-        LightingPlanExecutionTime executionTime = executionTimeService.getByPlanId(plan.getId());
-        boolean etNew = (executionTime == null);
-        if(etNew){
-            executionTime = new LightingPlanExecutionTime();
-            executionTime.setPlanId(plan.getId());
-        }
-        executionTime.setExecutionTime(job.getExecutionTime());
-        executionTime.setStartDate(job.getStartDate());
-        executionTime.setEndDate(job.getEndDate());
-        executionTime.setEnabledWeek(resolveEnabledWeek(job));
-        if(etNew){
-            executionTimeService.saveOrUpdate(executionTime);
-        }else{
-            executionTimeService.updateById(executionTime);
-        }
-    }
 
-    /**
-     * 解析周几配置：自定义时用传入值，否则按周期类型推导（1=周一 ... 7=周日）
-     */
-    private String resolveEnabledWeek(ScheduleJob job){
-        if(StringUtils.isNotEmpty(job.getEnabledWeek())){
-            return job.getEnabledWeek();
-        }
-        if("每天".equals(job.getCycleType()) || StringUtils.isEmpty(job.getCycleType())){
-            return "1,2,3,4,5,6,7";
-        }
-        if("工作日".equals(job.getCycleType())){
-            return "1,2,3,4,5";
-        }
-        if("周末".equals(job.getCycleType())){
-            return "6,7";
-        }
-        return null;
-    }
 
     @Override
     public void removeByScheduleJobId(Long scheduleJobId) {
@@ -405,18 +325,7 @@ public class LightingPlanServiceImpl extends ServiceImpl<LightingPlanMapper, Lig
         super.removeById(plan.getId());
     }
 
-    @Override
-    public void syncStatusFromScheduleJob(Long scheduleJobId, Integer status) {
-        if(scheduleJobId == null){
-            return;
-        }
-        LightingPlan plan = super.getOne(new LambdaQueryWrapper<LightingPlan>().eq(LightingPlan::getScheduleJobId, scheduleJobId));
-        if(plan == null){
-            return;
-        }
-        plan.setStatus(status != null && status == 1 ? LightingPlan.STATUS_ENABLE : LightingPlan.STATUS_DISABLE);
-        super.updateById(plan);
-    }
+
 
     @Override
     public void control(String relType, String relIds, String operationType) {

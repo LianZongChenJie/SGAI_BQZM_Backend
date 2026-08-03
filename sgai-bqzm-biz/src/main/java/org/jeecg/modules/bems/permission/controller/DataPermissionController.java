@@ -7,10 +7,6 @@ import org.apache.shiro.SecurityUtils;
 import org.jeecg.common.api.vo.Result;
 import org.jeecg.common.aspect.annotation.AutoLog;
 import org.jeecg.common.system.vo.LoginUser;
-import org.jeecg.common.system.vo.SelectTreeModel;
-import org.jeecg.modules.bems.mdm.entity.EquipmentCategory;
-import org.jeecg.modules.bems.mdm.service.IEquipmentCategoryService;
-import org.jeecg.modules.bems.mdm.service.ISpaceService;
 import org.jeecg.modules.bems.permission.dto.BatchAssignPermissionDto;
 import org.jeecg.modules.bems.permission.entity.RoleDataPermission;
 import org.jeecg.modules.bems.permission.service.RoleDataPermissionService;
@@ -33,11 +29,6 @@ public class DataPermissionController {
     @Autowired
     private RoleDataPermissionService permissionService;
 
-    @Autowired
-    private IEquipmentCategoryService categoryService;
-
-    @Autowired
-    private ISpaceService spaceService;
 
     @ApiOperation(value="查询当前用户数据权限", notes="查询当前用户的数据权限范围")
     @GetMapping("/current")
@@ -187,39 +178,4 @@ public class DataPermissionController {
         }
     }
 
-    @ApiOperation(value="获取专业树", notes="获取设备专业树（用于权限分配选择）")
-    @GetMapping("/equipment/category/tree")
-    public Result<List<SelectTreeModel>> getEquipmentCategoryTree() {
-        try {
-            List<SelectTreeModel> tree = categoryService.buildTree(EquipmentCategory.TYPE_EQUIPMENT);
-            return Result.ok(tree);
-        } catch (Exception e) {
-            log.error("获取专业树失败", e);
-            return Result.error("获取失败：" + e.getMessage());
-        }
-    }
-
-    @ApiOperation(value="获取专业树", notes="获取仪表专业树（用于权限分配选择）")
-    @GetMapping("/measuring/category/tree")
-    public Result<List<SelectTreeModel>> getMeasuringCategoryTree() {
-        try {
-            List<SelectTreeModel> tree = categoryService.buildTree(EquipmentCategory.TYPE_MEASURING);
-            return Result.ok(tree);
-        } catch (Exception e) {
-            log.error("获取专业树失败", e);
-            return Result.error("获取失败：" + e.getMessage());
-        }
-    }
-
-    @ApiOperation(value="获取空间树", notes="获取空间树（用于权限分配选择）")
-    @GetMapping("/space/tree")
-    public Result<List<SelectTreeModel>> getSpaceTree() {
-        try {
-            List<SelectTreeModel> tree = spaceService.buildTree();
-            return Result.ok(tree);
-        } catch (Exception e) {
-            log.error("获取空间树失败", e);
-            return Result.error("获取失败：" + e.getMessage());
-        }
-    }
 }

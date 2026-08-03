@@ -51,14 +51,7 @@ public class LightingHomeController {
         return Result.ok(homeService.getEnergyStatistics());
     }
 
-    /**
-     * 4. 待处理警报数量
-     */
-    @ApiOperation("待处理警报数量")
-    @GetMapping("/pendingAlarmCount")
-    public Result<Long> pendingAlarmCount() {
-        return Result.ok(homeService.getPendingAlarmCount());
-    }
+
 
     /**
      * 5. 地块运行状态

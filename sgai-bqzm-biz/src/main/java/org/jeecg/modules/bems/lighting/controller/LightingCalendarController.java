@@ -1,6 +1,8 @@
 package org.jeecg.modules.bems.lighting.controller;
 
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
+import com.fasterxml.jackson.databind.annotation.JsonSerialize;
+import com.fasterxml.jackson.databind.ser.std.ToStringSerializer;
 import io.swagger.annotations.Api;
 import io.swagger.annotations.ApiModel;
 import io.swagger.annotations.ApiModelProperty;
@@ -11,7 +13,6 @@ import lombok.extern.slf4j.Slf4j;
 import org.apache.commons.lang3.StringUtils;
 import org.jeecg.common.api.vo.Result;
 import org.jeecg.common.exception.JeecgBootException;
-import org.jeecg.modules.bems.entity.ScheduleJob;
 import org.jeecg.modules.bems.lighting.entity.LightingArea;
 import org.jeecg.modules.bems.lighting.entity.LightingCircuit;
 import org.jeecg.modules.bems.lighting.entity.LightingOperationLog;
@@ -22,7 +23,6 @@ import org.jeecg.modules.bems.lighting.service.ILightingCircuitService;
 import org.jeecg.modules.bems.lighting.service.ILightingOperationLogService;
 import org.jeecg.modules.bems.lighting.service.ILightingPlanExecutionTimeService;
 import org.jeecg.modules.bems.lighting.service.ILightingPlanService;
-import org.jeecg.modules.bems.service.IScheduleJobService;
 import org.springframework.web.bind.annotation.*;
 
 import java.time.LocalDate;
@@ -67,7 +67,6 @@ public class LightingCalendarController {
     private final ILightingPlanService planService;
     private final ILightingPlanExecutionTimeService executionTimeService;
     private final ILightingOperationLogService lightingOperationLogService;
-    private final IScheduleJobService scheduleJobService;
     private final ILightingAreaService lightingAreaService;
     private final ILightingCircuitService lightingCircuitService;
 
@@ -111,90 +110,6 @@ public class LightingCalendarController {
     }
 
     /**
-     * 事件详情：点击日历事件后调用。
-     * - 当天有执行日志 → 返回执行日志列表（logs）
-     * - 当天无执行日志 → 返回要执行的区域/回路列表（targets）
-     *
-     * @param source 事件来源：PLAN-照明计划、SCHEDULE-动态定时任务（向后兼容）、LOG-历史日志
-     * @param planId 关联ID（PLAN=计划ID，SCHEDULE=任务ID，LOG=日志的relId）
-     * @param date 日期 yyyy-MM-dd，查询当天执行日志
-     */
-    @ApiOperation("日历事件详情（返回当天执行日志；无日志时返回要执行的区域/回路）")
-    @GetMapping("/detail")
-    public Result<CalendarEventDetail> detail(@RequestParam String source,
-                                              @RequestParam Long planId,
-                                              @RequestParam String date) {
-        CalendarEventDetail detail = new CalendarEventDetail();
-        detail.setSource(source);
-        detail.setPlanId(planId);
-        detail.setDate(date);
-
-        if ("LOG".equals(source)) {
-            // 历史日志事件：planId 即日志的 relId，直接查询当天该目标的日志
-            List<LightingOperationLog> logs = queryLogsByDateAndRelIds(date, Collections.singleton(planId));
-            detail.setLogs(logs);
-            detail.setStatus(logs.isEmpty() ? STATUS_PENDING : STATUS_EXECUTED);
-            if (!logs.isEmpty()) {
-                LightingOperationLog first = logs.get(0);
-                detail.setPlanName(first.getName());
-                detail.setRelType(first.getRelType());
-                detail.setOperationType(first.getOperationType());
-            }
-            return Result.ok(detail);
-        }
-
-        String relType;
-        String operationType;
-        String executionTime;
-        String planName;
-        Set<Long> relIds;
-
-        if ("PLAN".equals(source)) {
-            LightingPlan plan = planService.getById(planId);
-            if (plan == null) {
-                throw new JeecgBootException("计划不存在");
-            }
-            planName = plan.getPlanName();
-            relType = plan.getRelType();
-            operationType = plan.getOperationType();
-            // 执行时间取执行配置表，与日历列表口径一致
-            LightingPlanExecutionTime et = executionTimeService.getByPlanId(planId);
-            executionTime = et != null ? et.getExecutionTime() : plan.getExecutionTime();
-            relIds = parseRelIds(plan.getRelIds());
-        } else if ("SCHEDULE".equals(source)) {
-            // 向后兼容：历史客户端仍可能传 SCHEDULE 来源
-            ScheduleJob job = scheduleJobService.getById(planId);
-            if (job == null) {
-                throw new JeecgBootException("定时任务不存在");
-            }
-            planName = job.getJobName();
-            relType = resolveScheduleRelType(job);
-            operationType = getScheduleOperationType(job);
-            executionTime = job.getExecutionTime();
-            relIds = resolveJobTargetIds(job);
-        } else {
-            throw new JeecgBootException("source 必须为 PLAN/SCHEDULE/LOG");
-        }
-
-        detail.setPlanName(planName);
-        detail.setRelType(relType);
-        detail.setOperationType(operationType);
-        detail.setExecutionTime(executionTime);
-
-        // 查询当天执行日志
-        List<LightingOperationLog> logs = queryLogsByDateAndRelIds(date, relIds);
-        detail.setLogs(logs);
-        detail.setStatus(logs.isEmpty() ? STATUS_PENDING : STATUS_EXECUTED);
-
-        // 无执行日志时，返回要执行的区域/回路
-        if (logs.isEmpty() && !relIds.isEmpty()) {
-            detail.setTargets(buildTargets(relType, relIds));
-        }
-
-        return Result.ok(detail);
-    }
-
-    /**
      * 查询指定日期内、目标ID集合上的执行日志（计划/定时器触发的控制记录）
      */
     private List<LightingOperationLog> queryLogsByDateAndRelIds(String date, Set<Long> relIds) {
@@ -217,18 +132,6 @@ public class LightingCalendarController {
                         .orderByDesc(LightingOperationLog::getOperationTime));
     }
 
-    /**
-     * 解析定时任务关联类型（兼容新版 relType=区域/回路 与旧版 controlType=AREA/CIRCUIT）
-     */
-    private String resolveScheduleRelType(ScheduleJob job) {
-        if ("区域".equals(job.getRelType()) || "AREA".equals(job.getControlType())) {
-            return "区域";
-        }
-        if ("回路".equals(job.getRelType()) || "CIRCUIT".equals(job.getControlType())) {
-            return "回路";
-        }
-        return job.getRelType();
-    }
 
     /**
      * 构建要执行的区域/回路目标列表
@@ -393,16 +296,6 @@ public class LightingCalendarController {
         return ids;
     }
 
-    /**
-     * 解析定时任务目标ID集合（优先 relIds，回退 targetId）
-     */
-    private Set<Long> resolveJobTargetIds(ScheduleJob job) {
-        Set<Long> ids = parseRelIds(job.getRelIds());
-        if (ids.isEmpty() && job.getTargetId() != null) {
-            ids.add(job.getTargetId());
-        }
-        return ids;
-    }
 
     /**
      * 判定事件状态：
@@ -442,16 +335,6 @@ public class LightingCalendarController {
         return false;
     }
 
-    /**
-     * 兼容旧定时任务的描述（向后兼容，供详情接口 SCHEDULE 来源使用）
-     */
-    private String getScheduleOperationType(ScheduleJob job) {
-        if ("AREA".equals(job.getControlType()) || "CIRCUIT".equals(job.getControlType())
-                || "区域".equals(job.getRelType()) || "回路".equals(job.getRelType())) {
-            return "OPEN".equals(job.getOperationType()) ? "开灯" : "关灯";
-        }
-        return "执行";
-    }
 
     // ==================== DTO ====================
 
@@ -471,7 +354,8 @@ public class LightingCalendarController {
     public static class CalendarEvent {
         @ApiModelProperty("来源：PLAN-照明计划")
         private String source;
-        @ApiModelProperty("关联ID")
+        @ApiModelProperty("关联ID（雪花ID，序列化为字符串避免精度丢失）")
+        @JsonSerialize(using = ToStringSerializer.class)
         private Long planId;
         @ApiModelProperty("名称")
         private String planName;
@@ -492,7 +376,8 @@ public class LightingCalendarController {
     public static class CalendarEventDetail {
         @ApiModelProperty("来源：PLAN-照明计划 SCHEDULE-动态任务 LOG-历史日志")
         private String source;
-        @ApiModelProperty("关联ID")
+        @ApiModelProperty("关联ID（雪花ID，序列化为字符串避免精度丢失）")
+        @JsonSerialize(using = ToStringSerializer.class)
         private Long planId;
         @ApiModelProperty("日期 yyyy-MM-dd")
         private String date;
@@ -515,7 +400,8 @@ public class LightingCalendarController {
     @Data
     @ApiModel("日历事件目标")
     public static class CalendarTarget {
-        @ApiModelProperty("目标ID")
+        @ApiModelProperty("目标ID（雪花ID，序列化为字符串避免精度丢失）")
+        @JsonSerialize(using = ToStringSerializer.class)
         private Long relId;
         @ApiModelProperty("目标名称")
         private String relName;
