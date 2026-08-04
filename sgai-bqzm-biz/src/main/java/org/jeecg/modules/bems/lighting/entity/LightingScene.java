@@ -74,6 +74,13 @@ public class LightingScene extends BaseEntity {
     private String remark;
 
     /**
+     * 泛光节目ID（关联泛光总控系统的节目）
+     * 有值时控制场景走泛光节目控制，无值走原来的回路控制
+     */
+    @ApiModelProperty(value = "泛光节目ID")
+    private String groupId;
+
+    /**
      * 场景明细（非表字段）
      */
     @TableField(exist = false)

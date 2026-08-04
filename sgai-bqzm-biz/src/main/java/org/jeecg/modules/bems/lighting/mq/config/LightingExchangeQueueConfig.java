@@ -13,7 +13,7 @@ import org.springframework.context.annotation.Configuration;
 public class LightingExchangeQueueConfig {
 
     /**
-     * 照明控制消息发送队列，四高炉
+     * 照明控制消息发送队列，金安桥
      */
     @Bean
     public Queue lightingSend() {

@@ -40,6 +40,8 @@ public class LightingPlanServiceImpl extends ServiceImpl<LightingPlanMapper, Lig
 
     private final ILightingPlanExecutionTimeService executionTimeService;
 
+    private final ILightingSceneService lightingSceneService;
+
 
     @Override
     public IPage<LightingPlan> listPage(LightingPlanQueryDto param) {
@@ -358,7 +360,29 @@ public class LightingPlanServiceImpl extends ServiceImpl<LightingPlanMapper, Lig
         }
         if(LightingPlan.REL_TYPE_AREA.equals(relType)){
             // 区域（场景）批量全开/全关
-            executeArea(ids, op);
+            // 先查询场景列表，判断是否有泛光节目ID
+            List<org.jeecg.modules.bems.lighting.entity.LightingScene> sceneList = lightingSceneService.listByIds(ids);
+
+            // 操作类型转成泛光的 onOff：1开，2关
+            int onOff = LightingPlan.OPERATION_TYPE_OPEN.equals(op) ? 1 : 2;
+
+            // 有泛光节目ID的走MQ，没有的（包括查不到场景的）走原来的逻辑
+            Set<Long> normalIds = new HashSet<>(ids); // 默认全部走原来的逻辑
+            if(CollectionUtil.isNotEmpty(sceneList)){
+                for(org.jeecg.modules.bems.lighting.entity.LightingScene scene : sceneList){
+                    if(StringUtils.isNotBlank(scene.getGroupId())){
+                        // 有泛光节目ID，发MQ给小程序调节目
+                        lightingSendService.sendGroupOper(scene.getGroupId(), onOff, scene.getId(), scene.getSceneName());
+                        // 从普通列表里移除，不走原来的逻辑
+                        normalIds.remove(scene.getId());
+                    }
+                }
+            }
+
+            // 走原来的逻辑
+            if(!normalIds.isEmpty()){
+                executeArea(normalIds, op);
+            }
         }else if(LightingPlan.REL_TYPE_CIRCUIT.equals(relType)){
             // 回路批量开启/关闭
             executeCircuit(ids, op);

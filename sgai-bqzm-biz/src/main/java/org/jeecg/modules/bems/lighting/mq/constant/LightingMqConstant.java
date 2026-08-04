@@ -53,4 +53,9 @@ public class LightingMqConstant {
      */
     public static final String ROUTING_KEY_LIGHTING_COMSTAT = "bqzm_comstat_execution";
 
+    /**
+     * 泛光节目操作队列（发送到电箱控制小程序）
+     */
+    public static final String QUEUE_LIGHTING_GROUP_OPER = "QUEUE_LIGHTING_GROUP_OPER";
+
 }

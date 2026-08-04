@@ -97,4 +97,21 @@ public class LightingSendService {
         return LocalDateTimeUtil.between(LocalDateTime.now(),executionTime, ChronoUnit.SECONDS);
     }
 
+    /**
+     * 发送泛光节目操作消息（到电箱控制小程序）
+     * @param groupId 泛光节目ID
+     * @param onOff 操作：1=开，2=关
+     * @param sceneId 场景ID
+     * @param sceneName 场景名称
+     */
+    public void sendGroupOper(String groupId, int onOff, Long sceneId, String sceneName) {
+        Map<String, Object> msg = new HashMap<>();
+        msg.put("groupId", groupId);
+        msg.put("onOff", onOff);
+        msg.put("sceneId", sceneId);
+        msg.put("sceneName", sceneName);
+        log.info("发送泛光节目操作消息：groupId={}, onOff={}, sceneId={}, sceneName={}", groupId, onOff, sceneId, sceneName);
+        rabbitTemplate.convertAndSend("", LightingMqConstant.QUEUE_LIGHTING_GROUP_OPER, JSONObject.toJSONString(msg));
+    }
+
 }
