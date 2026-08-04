@@ -110,6 +110,68 @@ public class LightingCalendarController {
     }
 
     /**
+     * 查询日历事件详情（点击日历事件后调用）：
+     * - 当天有计划/定时器执行日志 → 返回执行日志列表（logs）
+     * - 当天无执行日志 → 返回要执行的区域/回路目标列表（targets）
+     *
+     * @param source 来源：PLAN-照明计划、LOG-历史日志
+     * @param planId 关联ID（计划ID；LOG 来源时为日志的目标ID）
+     * @param date 日期 yyyy-MM-dd
+     */
+    @ApiOperation("查询日历事件详情（执行日志或要执行的区域/回路）")
+    @GetMapping("/detail")
+    public Result<CalendarEventDetail> detail(@RequestParam String source,
+                                              @RequestParam Long planId,
+                                              @RequestParam String date) {
+        CalendarEventDetail detail = new CalendarEventDetail();
+        detail.setSource(source);
+        detail.setPlanId(planId);
+        detail.setDate(date);
+
+        if ("LOG".equals(source)) {
+            // 历史日志事件：planId 即日志的 relId，直接查询当天该目标的日志
+            List<LightingOperationLog> logs = queryLogsByDateAndRelIds(date, Collections.singleton(planId));
+            detail.setLogs(logs);
+            detail.setStatus(logs.isEmpty() ? STATUS_PENDING : STATUS_EXECUTED);
+            if (!logs.isEmpty()) {
+                LightingOperationLog first = logs.get(0);
+                detail.setPlanName(first.getName());
+                detail.setRelType(first.getRelType());
+                detail.setOperationType(first.getOperationType());
+            }
+            return Result.ok(detail);
+        }
+
+        if ("PLAN".equals(source)) {
+            LightingPlan plan = planService.getById(planId);
+            if (plan == null) {
+                throw new JeecgBootException("计划不存在");
+            }
+            detail.setPlanName(plan.getPlanName());
+            detail.setRelType(plan.getRelType());
+            detail.setOperationType(plan.getOperationType());
+            // 执行时间取执行配置表，与日历列表口径一致
+            LightingPlanExecutionTime et = executionTimeService.getByPlanId(planId);
+            detail.setExecutionTime(et != null ? et.getExecutionTime() : plan.getExecutionTime());
+
+            Set<Long> relIds = parseRelIds(plan.getRelIds());
+
+            // 查询当天执行日志
+            List<LightingOperationLog> logs = queryLogsByDateAndRelIds(date, relIds);
+            detail.setLogs(logs);
+            detail.setStatus(logs.isEmpty() ? STATUS_PENDING : STATUS_EXECUTED);
+
+            // 无执行日志时，返回要执行的区域/回路
+            if (logs.isEmpty() && !relIds.isEmpty()) {
+                detail.setTargets(buildTargets(plan.getRelType(), relIds));
+            }
+            return Result.ok(detail);
+        }
+
+        throw new JeecgBootException("source 必须为 PLAN/LOG");
+    }
+
+    /**
      * 查询指定日期内、目标ID集合上的执行日志（计划/定时器触发的控制记录）
      */
     private List<LightingOperationLog> queryLogsByDateAndRelIds(String date, Set<Long> relIds) {
@@ -374,7 +436,7 @@ public class LightingCalendarController {
     @Data
     @ApiModel("日历事件详情")
     public static class CalendarEventDetail {
-        @ApiModelProperty("来源：PLAN-照明计划 SCHEDULE-动态任务 LOG-历史日志")
+        @ApiModelProperty("来源：PLAN-照明计划 LOG-历史日志")
         private String source;
         @ApiModelProperty("关联ID（雪花ID，序列化为字符串避免精度丢失）")
         @JsonSerialize(using = ToStringSerializer.class)
