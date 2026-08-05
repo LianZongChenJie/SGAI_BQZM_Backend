@@ -54,8 +54,16 @@ public class LightingMqConstant {
     public static final String ROUTING_KEY_LIGHTING_COMSTAT = "bqzm_comstat_execution";
 
     /**
+     * 四高炉灯控专用-小程序同步状态队列
+     * 接收电箱控制小程序同步过来的泛光电箱状态
+     */
+    public static final String QUEUE_SGF_LIGHTING_STATUS_SYNC = "QUEUE_SGF_LIGHTING_STATUS_SYNC";
+
+    /**
      * 泛光节目操作队列（发送到电箱控制小程序）
      */
     public static final String QUEUE_LIGHTING_GROUP_OPER = "QUEUE_LIGHTING_GROUP_OPER";
+
+    public static final String QUEUE_ELECTRIC_BOX_OPERATION = "QUEUE_ELECTRIC_BOX_OPERATION";
 
 }

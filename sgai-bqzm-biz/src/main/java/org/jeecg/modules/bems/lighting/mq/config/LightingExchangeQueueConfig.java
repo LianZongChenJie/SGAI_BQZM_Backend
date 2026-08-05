@@ -29,11 +29,24 @@ public class LightingExchangeQueueConfig {
     }
 
     /**
-     * 照明控制消息发送队列，一高炉
+     * 四高炉操作队列
+     */
+    @Bean
+    public Queue lightingListenersgl(){
+        return new Queue(LightingMqConstant.QUEUE_LIGHTING_GROUP_OPER,true);
+    }
+
+    /**
+     * 照明控制消息发送队列，一高炉  节目
      */
     @Bean
     public Queue lightingSendYgl(){
         return new Queue(LightingMqConstant.QUEUE_LIGHTING_SEND_YGL,true);
+    }
+
+    @Bean
+    public Queue lightingSendSglare(){
+        return new Queue(LightingMqConstant.QUEUE_ELECTRIC_BOX_OPERATION,true);
     }
 
     /**
@@ -64,6 +77,14 @@ public class LightingExchangeQueueConfig {
     @Bean
     public Queue lightingCircuitComstat(){
         return new Queue(LightingMqConstant.QUEUE_LIGHTING_CIRCUIT_COMSTAT,true);
+    }
+
+    /**
+     * 四高炉灯控专用-小程序同步状态队列
+     */
+    @Bean
+    public Queue sgfLightingStatusSync(){
+        return new Queue(LightingMqConstant.QUEUE_SGF_LIGHTING_STATUS_SYNC,true);
     }
 
 

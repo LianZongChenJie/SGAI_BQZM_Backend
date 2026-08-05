@@ -2,6 +2,7 @@ package org.jeecg.modules.bems.lighting.mq.send;
 
 import cn.hutool.core.date.LocalDateTimeUtil;
 import com.alibaba.fastjson.JSONObject;
+import io.micrometer.core.instrument.binder.system.ProcessorMetrics;
 import lombok.AllArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.apache.commons.lang3.StringUtils;
@@ -26,6 +27,7 @@ public class LightingSendService {
     private final RabbitTemplate rabbitTemplate;
 
     private final RedisUtil redisUtil;
+    private final ProcessorMetrics processorMetrics;
 
     public void send(LightInfoUpdateLoad msg) {
         log.info("发送消息：{}", msg);
@@ -110,8 +112,10 @@ public class LightingSendService {
         msg.put("onOff", onOff);
         msg.put("sceneId", sceneId);
         msg.put("sceneName", sceneName);
+        MessageProperties properties = new MessageProperties();
+        properties.setContentType(MessageProperties.CONTENT_TYPE_JSON);
         log.info("发送泛光节目操作消息：groupId={}, onOff={}, sceneId={}, sceneName={}", groupId, onOff, sceneId, sceneName);
-        rabbitTemplate.convertAndSend("", LightingMqConstant.QUEUE_LIGHTING_GROUP_OPER, JSONObject.toJSONString(msg));
+        rabbitTemplate.send("", LightingMqConstant.QUEUE_LIGHTING_GROUP_OPER, new Message(JSONObject.toJSONString(msg).getBytes(),properties));
     }
 
 }

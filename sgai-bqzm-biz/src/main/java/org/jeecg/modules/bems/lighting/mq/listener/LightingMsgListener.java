@@ -1,6 +1,7 @@
 package org.jeecg.modules.bems.lighting.mq.listener;
 
 import com.alibaba.fastjson.JSONObject;
+import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import lombok.AllArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.apache.commons.lang3.StringUtils;
@@ -10,6 +11,7 @@ import org.jeecg.modules.bems.lighting.entity.LightingArea;
 import org.jeecg.modules.bems.lighting.entity.LightingCircuit;
 import org.jeecg.modules.bems.lighting.mq.constant.LightingMqConstant;
 import org.jeecg.modules.bems.lighting.mq.message.LightInfoUpdateLoad;
+import org.jeecg.modules.bems.lighting.mq.message.PowerBoxData;
 import org.jeecg.modules.bems.lighting.mq.send.LightingSendService;
 import org.jeecg.modules.bems.lighting.service.ILightingAreaService;
 import org.jeecg.modules.bems.lighting.service.ILightingCircuitService;
@@ -117,6 +119,73 @@ public class LightingMsgListener {
             circuitService.updateComstat(space, areaCode, circuitCode, comstat);
         }catch (Exception e){
             log.error("mq消息消费失败。queue:{}，message:{}", LightingMqConstant.QUEUE_LIGHTING_PLAN, body, e);
+        }
+    }
+
+    /**
+     * 四高炉灯控专用-小程序同步状态消息监听
+     * 接收电箱控制小程序同步过来的泛光电箱状态，更新 lighting_area 表
+     * deviceSn → area_code
+     * devicestate → status
+     * 单独处理，不走老的KNX那套逻辑
+     */
+    @RabbitListener(queues = LightingMqConstant.QUEUE_SGF_LIGHTING_STATUS_SYNC, ackMode = "AUTO")
+    public void sgfStatusSyncListener(Message message){
+        String body = new String(message.getBody());
+        try {
+            log.info("【四高炉灯控】收到小程序同步电箱状态消息：{}", body);
+            List<PowerBoxData> powerBoxList = JSONObject.parseArray(body, PowerBoxData.class);
+
+            if(powerBoxList == null || powerBoxList.isEmpty()){
+                log.warn("【四高炉灯控】收到的电箱列表为空");
+                return;
+            }
+
+            int updateCount = 0;
+            for(PowerBoxData box : powerBoxList){
+                // 根据 area_code（deviceSn）查询区域
+                LambdaQueryWrapper<LightingArea> wrapper = new LambdaQueryWrapper<>();
+                wrapper.eq(LightingArea::getAreaCode, box.getDeviceSn());
+                LightingArea area = areaService.getOne(wrapper);
+
+                if(area == null){
+                    log.warn("【四高炉灯控】未找到对应的区域，area_code={}", box.getDeviceSn());
+                    continue;
+                }
+
+                // 更新状态（存文字）
+                area.setStatus(convertStateToText(box.getDevicestate()));
+                // TODO: 如果以后改回存数字，用下面这行
+                // area.setStatus(String.valueOf(box.getDevicestate()));
+                areaService.updateById(area);
+                updateCount++;
+
+                log.info("【四高炉灯控】更新区域状态：area_code={}, areaName={}, status={}",
+                        box.getDeviceSn(), area.getAreaName(), box.getDevicestate());
+            }
+
+            log.info("【四高炉灯控】小程序同步电箱状态处理完成，共 {} 个电箱，更新 {} 个", powerBoxList.size(), updateCount);
+        } catch (Exception e) {
+            log.error("【四高炉灯控】小程序同步电箱状态消息处理异常", e);
+        }
+    }
+
+    /**
+     * 泛光电箱状态转文字
+     * 1→开启，0→关闭，2→离线
+     */
+    private String convertStateToText(Integer deviceState) {
+        if (deviceState == null) {
+            return "离线";
+        }
+        switch (deviceState) {
+            case 1:
+                return "开启";
+            case 0:
+                return "关闭";
+            case 2:
+            default:
+                return "离线";
         }
     }
 }
