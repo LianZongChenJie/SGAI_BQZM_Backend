@@ -66,4 +66,14 @@ public class LightingMqConstant {
 
     public static final String QUEUE_ELECTRIC_BOX_OPERATION = "QUEUE_ELECTRIC_BOX_OPERATION";
 
+    /**
+     * 1号馆控制消息发送队列（通过MQ转发小程序发给181服务器）
+     */
+    public static final String QUEUE_LIGHTING_SEND_1HG = "lighting_control_1hg";
+
+    /**
+     * 1号馆状态反馈队列（接收MQ转发小程序从181服务器转过来的状态消息）
+     */
+    public static final String QUEUE_LIGHTING_LISTENER_1HG = "lighting_data_1hg";
+
 }

@@ -118,4 +118,22 @@ public class LightingSendService {
         rabbitTemplate.send("", LightingMqConstant.QUEUE_LIGHTING_GROUP_OPER, new Message(JSONObject.toJSONString(msg).getBytes(),properties));
     }
 
+    /**
+     * 发送1号馆控制消息（通过MQ转发小程序发给181服务器）
+     * @param gatewayAdr 网关地址（Type=IpTunneling;HostAddress=xxx）
+     * @param knxAdr KNX地址
+     * @param value 值（100=开，0=关）
+     */
+    public void send1hgControl(String gatewayAdr, String knxAdr, String value) {
+        Map<String, Object> msg = new HashMap<>();
+        msg.put("GatewayAdr", gatewayAdr);
+        msg.put("KnxAdr", knxAdr);
+        msg.put("value", value);
+        msg.put("CollectionTime", LocalDateTimeUtil.format(LocalDateTime.now(), "yyyy-MM-dd HH:mm:ss"));
+        MessageProperties properties = new MessageProperties();
+        properties.setContentType(MessageProperties.CONTENT_TYPE_JSON);
+        log.info("【1号馆】发送控制消息：GatewayAdr={}, KnxAdr={}, value={}", gatewayAdr, knxAdr, value);
+        rabbitTemplate.send("", LightingMqConstant.QUEUE_LIGHTING_SEND_1HG, new Message(JSONObject.toJSONString(msg).getBytes(), properties));
+    }
+
 }

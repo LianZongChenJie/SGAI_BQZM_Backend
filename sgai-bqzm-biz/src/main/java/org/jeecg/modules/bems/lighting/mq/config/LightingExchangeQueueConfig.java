@@ -87,6 +87,22 @@ public class LightingExchangeQueueConfig {
         return new Queue(LightingMqConstant.QUEUE_SGF_LIGHTING_STATUS_SYNC,true);
     }
 
+    /**
+     * 1号馆控制消息发送队列（通过MQ转发小程序发给181服务器）
+     */
+    @Bean
+    public Queue lightingSend1hg(){
+        return new Queue(LightingMqConstant.QUEUE_LIGHTING_SEND_1HG,true);
+    }
+
+    /**
+     * 1号馆状态反馈队列（接收MQ转发小程序从181服务器转过来的状态消息）
+     */
+    @Bean
+    public Queue lightingListener1hg(){
+        return new Queue(LightingMqConstant.QUEUE_LIGHTING_LISTENER_1HG,true);
+    }
+
 
     /**
      * 照明计划队列绑定

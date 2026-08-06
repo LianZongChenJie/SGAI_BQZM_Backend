@@ -188,4 +188,81 @@ public class LightingMsgListener {
                 return "离线";
         }
     }
+
+    /**
+     * 1号馆状态消息监听
+     * 接收MQ转发小程序从181服务器转过来的状态消息，更新回路状态
+     * 单独处理，不走老的KNX那套逻辑
+     */
+    @RabbitListener(queues = LightingMqConstant.QUEUE_LIGHTING_LISTENER_1HG, ackMode = "AUTO")
+    public void hg1StatusListener(Message message){
+        String body = new String(message.getBody());
+        try {
+            log.info("【1号馆】收到状态消息：{}", body);
+            JSONObject msg = JSONObject.parseObject(body);
+
+            String gatewayAdr = msg.getString("GatewayAdr");
+            String knxAdr = msg.getString("KnxAdr");
+            String value = msg.getString("value");
+
+            if(StringUtils.isEmpty(gatewayAdr) || StringUtils.isEmpty(knxAdr) || StringUtils.isEmpty(value)){
+                log.warn("【1号馆】状态消息参数不完整，跳过");
+                return;
+            }
+
+            // 拼成 circuit_code：GatewayAdr + "-" + KnxAdr
+            String circuitCode = gatewayAdr + "-" + knxAdr;
+
+            // 根据 circuit_code 查询回路
+            LambdaQueryWrapper<LightingCircuit> wrapper = new LambdaQueryWrapper<>();
+            wrapper.eq(LightingCircuit::getCircuitCode, circuitCode);
+            LightingCircuit circuit = circuitService.getOne(wrapper);
+
+            if(circuit == null){
+                log.warn("【1号馆】未找到对应的回路，circuit_code={}", circuitCode);
+                return;
+            }
+
+            // 判断状态，和老的KNX逻辑一致：0=关，0-100之间=开（统一设为100）
+            boolean isValidNumber = false;
+            String status = "";
+            try {
+                int numValue = Integer.parseInt(value);
+                isValidNumber = numValue >= 0 && numValue <= 100;
+                if(numValue == 0){
+                    status = LightingCircuit.STATUS_OFF;
+                }else if(numValue > 0 && numValue <= 100){
+                    status = LightingCircuit.STATUS_ON;
+                }
+            } catch (NumberFormatException e) {
+                isValidNumber = false;
+            }
+
+            if(isValidNumber){
+                // 更新回路状态
+                circuit.setStatus(status);
+                circuitService.updateById(circuit);
+
+                // 通过 area_id 查区域，拿到 space
+                LightingArea area = areaService.getById(circuit.getAreaId());
+                String space = area != null ? area.getSpace() : "";
+
+                // 更新通讯状态为在线
+                circuitService.updateComstat(space, String.valueOf(circuit.getAreaId()), circuit.getCircuitCode(), LightingCircuit.COMSTAT_ONLINE);
+
+                // 发送离线延迟消息
+                sendService.sendLightingCircuitComstat(space, String.valueOf(circuit.getAreaId()), circuit.getCircuitCode());
+
+                log.info("【1号馆】更新回路状态：circuit_code={}, status={}", circuitCode, status);
+            }else{
+                // 状态异常，设置为离线
+                LightingArea area = areaService.getById(circuit.getAreaId());
+                String space = area != null ? area.getSpace() : "";
+                circuitService.updateComstat(space, String.valueOf(circuit.getAreaId()), circuit.getCircuitCode(), LightingCircuit.COMSTAT_OFFLINE);
+                log.warn("【1号馆】状态值异常，设置为离线：circuit_code={}, value={}", circuitCode, value);
+            }
+        } catch (Exception e) {
+            log.error("【1号馆】状态消息处理异常", e);
+        }
+    }
 }

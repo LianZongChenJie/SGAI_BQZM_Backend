@@ -6,17 +6,21 @@ import com.baomidou.mybatisplus.core.conditions.update.LambdaUpdateWrapper;
 import com.baomidou.mybatisplus.core.metadata.IPage;
 import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
 import com.baomidou.mybatisplus.extension.service.impl.ServiceImpl;
-import lombok.AllArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.apache.commons.lang3.StringUtils;
 import org.jeecg.common.exception.JeecgBootException;
 import org.jeecg.modules.bems.lighting.dto.LightingAreaQueryDto;
 import org.jeecg.modules.bems.lighting.entity.LightingArea;
+import org.jeecg.modules.bems.lighting.entity.LightingCircuit;
 import org.jeecg.modules.bems.lighting.entity.LightingOperationLog;
 import org.jeecg.modules.bems.lighting.mapper.LightingAreaMapper;
 import org.jeecg.modules.bems.lighting.service.ILightingAreaService;
+import org.jeecg.modules.bems.lighting.service.ILightingCircuitService;
 import org.jeecg.modules.bems.lighting.service.ILightingOperationLogService;
 import org.jeecg.modules.bems.lighting.service.LightingService;
+import org.jeecg.modules.bems.lighting.mq.send.LightingSendService;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.context.annotation.Lazy;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -27,13 +31,31 @@ import java.util.List;
 
 
 @Service
-@AllArgsConstructor
 @Slf4j
 public class LightingAreaServiceImpl extends ServiceImpl<LightingAreaMapper, LightingArea> implements ILightingAreaService {
 
     private final LightingService service;
 
     private final ILightingOperationLogService lightingOperationLogService;
+
+    private final ILightingCircuitService circuitService;
+
+    private final LightingSendService sendService;
+
+    /**
+     * 注意：circuitService 与 LightingCircuitServiceImpl.areaService 存在循环依赖，
+     * 必须在构造参数上用 @Lazy 打破（Lombok 的 @AllArgsConstructor 不会把字段上的 @Lazy 复制到构造参数上）
+     */
+    @Autowired
+    public LightingAreaServiceImpl(LightingService service,
+                                   ILightingOperationLogService lightingOperationLogService,
+                                   @Lazy ILightingCircuitService circuitService,
+                                   LightingSendService sendService) {
+        this.service = service;
+        this.lightingOperationLogService = lightingOperationLogService;
+        this.circuitService = circuitService;
+        this.sendService = sendService;
+    }
 
     @Override
     public IPage<LightingArea> listPage(LightingAreaQueryDto params) {
@@ -122,6 +144,14 @@ public class LightingAreaServiceImpl extends ServiceImpl<LightingAreaMapper, Lig
         if(area == null){
             throw new JeecgBootException("区域不存在");
         }
+
+        // 1号馆（space=902）走新的MQ转发通道，不走老的KNX
+        if("902".equals(area.getSpace())){
+            control1hg(area, type);
+            lightingOperationLogService.saveLog(LightingOperationLog.REL_TYPE_AREA,id,area.getAreaName(), LocalDateTime.now(), type ? "区域全开" : "区域全关");
+            return;
+        }
+
         if( type) {
             service.areaOpen(area.getSpace(),area.getAreaCode(),area.getOpenCode());
             lightingOperationLogService.saveLog(LightingOperationLog.REL_TYPE_AREA,id,area.getAreaName(), LocalDateTime.now(),"区域全开");
@@ -129,5 +159,47 @@ public class LightingAreaServiceImpl extends ServiceImpl<LightingAreaMapper, Lig
             service.areaClose(area.getSpace(),area.getAreaCode(),area.getCloseCode());
             lightingOperationLogService.saveLog(LightingOperationLog.REL_TYPE_AREA,id,area.getAreaName(), LocalDateTime.now(),"区域全关");
         }
+    }
+
+    /**
+     * 1号馆区域控制（走MQ转发小程序通道）
+     * 遍历区域下所有回路，逐个发送控制消息
+     */
+    private void control1hg(LightingArea area, boolean type){
+        // 查询区域下所有回路
+        LambdaQueryWrapper<LightingCircuit> wrapper = new LambdaQueryWrapper<>();
+        wrapper.eq(LightingCircuit::getAreaId, area.getId());
+        java.util.List<LightingCircuit> circuitList = circuitService.list(wrapper);
+
+        if(CollectionUtil.isEmpty(circuitList)){
+            log.warn("【1号馆】区域下没有回路，areaId={}, areaName={}", area.getId(), area.getAreaName());
+            return;
+        }
+
+        String value = type ? "100" : "0";
+        log.info("【1号馆】区域控制：areaName={}, 操作={}, 回路数={}", area.getAreaName(), type ? "全开" : "全关", circuitList.size());
+
+        for(LightingCircuit circuit : circuitList){
+            try {
+                String circuitCode = circuit.getCircuitCode();
+                if(StringUtils.isEmpty(circuitCode)){
+                    continue;
+                }
+                // 拆分 circuit_code：第一个 "-" 前面是 GatewayAdr，后面是 KnxAdr
+                int dashIndex = circuitCode.indexOf('-');
+                if(dashIndex <= 0 || dashIndex >= circuitCode.length() - 1){
+                    log.warn("【1号馆】回路编码格式不对，跳过：circuitCode={}", circuitCode);
+                    continue;
+                }
+                String gatewayAdr = circuitCode.substring(0, dashIndex);
+                String knxAdr = circuitCode.substring(dashIndex + 1);
+
+                sendService.send1hgControl(gatewayAdr, knxAdr, value);
+            } catch (Exception e){
+                log.error("【1号馆】发送回路控制消息失败：circuitId={}, circuitName={}", circuit.getId(), circuit.getCircuitName(), e);
+            }
+        }
+
+        log.info("【1号馆】区域控制完成：areaName={}, 操作={}", area.getAreaName(), type ? "全开" : "全关");
     }
 }
