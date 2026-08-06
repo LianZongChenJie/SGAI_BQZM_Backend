@@ -12,6 +12,12 @@ import java.time.LocalDateTime;
 public class LightingOperationLogQueryDto {
 
     /**
+     * 日志类型：场景、定时任务、区域、回路
+     */
+    @ApiModelProperty(value = "日志类型：场景、定时任务、区域、回路")
+    private String logType;
+
+    /**
      * 关联类型：区域、回路
      */
     @ApiModelProperty(value = "关联类型：区域、回路")

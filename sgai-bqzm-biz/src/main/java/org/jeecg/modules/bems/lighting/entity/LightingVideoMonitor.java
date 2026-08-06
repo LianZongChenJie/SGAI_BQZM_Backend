@@ -1,6 +1,7 @@
 package org.jeecg.modules.bems.lighting.entity;
 
 import com.baomidou.mybatisplus.annotation.IdType;
+import com.baomidou.mybatisplus.annotation.TableField;
 import com.baomidou.mybatisplus.annotation.TableId;
 import com.baomidou.mybatisplus.annotation.TableName;
 import com.fasterxml.jackson.annotation.JsonFormat;
@@ -49,6 +50,13 @@ public class LightingVideoMonitor {
      */
     @ApiModelProperty(value = "区域名称")
     private String areaName;
+
+    /**
+     * 空间ID（对应片区/空间表主键；表列名为 spaceid，需显式映射）
+     */
+    @TableField("spaceid")
+    @ApiModelProperty(value = "空间ID")
+    private Long spaceId;
 
     /**
      * 状态：在线、离线

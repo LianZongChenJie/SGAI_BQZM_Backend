@@ -1,11 +1,13 @@
 package org.jeecg.modules.bems.lighting.entity;
 
 import com.baomidou.mybatisplus.annotation.IdType;
+import com.baomidou.mybatisplus.annotation.TableField;
 import com.baomidou.mybatisplus.annotation.TableId;
 import com.baomidou.mybatisplus.annotation.TableName;
 import lombok.Data;
 
 import java.time.LocalDateTime;
+import java.util.List;
 
 /**
  * 照明-控制记录
@@ -24,10 +26,42 @@ public class LightingOperationLog {
     public static final String REL_TYPE_CIRCUIT = "回路";
 
     /**
+     * 日志类型：一键控制
+     */
+    public static final String LOG_TYPE_ONE_KEY = "一键控制";
+    /**
+     * 日志类型：场景
+     */
+    public static final String LOG_TYPE_SCENE = "场景";
+    /**
+     * 日志类型：定时任务
+     */
+    public static final String LOG_TYPE_PLAN = "定时任务";
+    /**
+     * 日志类型：区域
+     */
+    public static final String LOG_TYPE_AREA = "区域";
+    /**
+     * 日志类型：回路
+     */
+    public static final String LOG_TYPE_CIRCUIT = "回路";
+
+    /**
      * 主键
      */
     @TableId(type = IdType.ASSIGN_ID)
     private Long id;
+
+    /**
+     * 日志类型：场景、定时任务、区域、回路
+     */
+    private String logType;
+
+    /**
+     * 父日志ID（顶层日志为null）
+     */
+    private Long parentId;
+
     /**
      * 关联类型，区域：1、回路：2
      */
@@ -73,5 +107,11 @@ public class LightingOperationLog {
      * 操作类型：自动、手动
      */
     private String operatorType;
+
+    /**
+     * 子日志列表（非表字段，详情查询用）
+     */
+    @TableField(exist = false)
+    private List<LightingOperationLog> children;
 
 }

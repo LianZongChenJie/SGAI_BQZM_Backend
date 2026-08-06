@@ -223,15 +223,14 @@ public class LightingMsgListener {
                 return;
             }
 
-            // 判断状态，和老的KNX逻辑一致：0=关，0-100之间=开（统一设为100）
+            // 判断状态，和老的KNX逻辑一致：0=关，1是 开
             boolean isValidNumber = false;
             String status = "";
             try {
                 int numValue = Integer.parseInt(value);
-                isValidNumber = numValue >= 0 && numValue <= 100;
                 if(numValue == 0){
                     status = LightingCircuit.STATUS_OFF;
-                }else if(numValue > 0 && numValue <= 100){
+                }else if(numValue == 1){
                     status = LightingCircuit.STATUS_ON;
                 }
             } catch (NumberFormatException e) {

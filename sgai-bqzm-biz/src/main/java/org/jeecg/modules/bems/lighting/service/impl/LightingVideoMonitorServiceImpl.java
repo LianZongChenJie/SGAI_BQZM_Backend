@@ -22,6 +22,7 @@ public class LightingVideoMonitorServiceImpl extends ServiceImpl<LightingVideoMo
         LambdaQueryWrapper<LightingVideoMonitor> queryWrapper = new LambdaQueryWrapper<LightingVideoMonitor>()
                 .like(StringUtils.isNotEmpty(params.getVideoName()), LightingVideoMonitor::getVideoName, params.getVideoName())
                 .eq(params.getAreaId() != null, LightingVideoMonitor::getAreaId, params.getAreaId())
+                .eq(params.getSpaceId() != null, LightingVideoMonitor::getSpaceId, params.getSpaceId())
                 .eq(StringUtils.isNotEmpty(params.getStatus()), LightingVideoMonitor::getStatus, params.getStatus())
                 .orderByAsc(LightingVideoMonitor::getSort);
         return super.page(new Page<>(pageNo, pageSize), queryWrapper);
@@ -31,6 +32,13 @@ public class LightingVideoMonitorServiceImpl extends ServiceImpl<LightingVideoMo
     public List<LightingVideoMonitor> listByArea(Long areaId) {
         return super.list(new LambdaQueryWrapper<LightingVideoMonitor>()
                 .eq(LightingVideoMonitor::getAreaId, areaId)
+                .orderByAsc(LightingVideoMonitor::getSort));
+    }
+
+    @Override
+    public List<LightingVideoMonitor> listBySpace(Long spaceId) {
+        return super.list(new LambdaQueryWrapper<LightingVideoMonitor>()
+                .eq(spaceId != null, LightingVideoMonitor::getSpaceId, spaceId)
                 .orderByAsc(LightingVideoMonitor::getSort));
     }
 

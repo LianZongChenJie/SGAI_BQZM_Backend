@@ -88,6 +88,12 @@ public class LightingArea {
      */
     @ApiModelProperty(value = "监控地址")
     private String monitorAdr;
+
+    /**
+     * 监控/设备名称
+     */
+    @ApiModelProperty(value = "监控/设备名称")
+    private String monitorName;
     /**
      * 备注
      */
@@ -175,4 +181,17 @@ public class LightingArea {
      */
     @ApiModelProperty(value = "地图层级")
     private Integer mapLevel;
+
+    /**
+     * 所属片区ID（关联 lighting_district.id）
+     */
+    @ApiModelProperty(value = "所属片区ID")
+    private Long districtId;
+
+    /**
+     * 片区名称（非表字段，查询时关联填充）
+     */
+    @TableField(exist = false)
+    @ApiModelProperty(value = "片区名称")
+    private String districtName;
 }

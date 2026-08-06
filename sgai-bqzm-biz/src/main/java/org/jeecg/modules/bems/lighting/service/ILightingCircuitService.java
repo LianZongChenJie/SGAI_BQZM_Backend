@@ -11,7 +11,11 @@ public interface ILightingCircuitService extends IService<LightingCircuit> {
 
     void open(Long id);
 
+    void open(Long id, Long parentId);
+
     void close(Long id);
+
+    void close(Long id, Long parentId);
 
     void mqControl(String space,String areaCode,String circuitCode, String status);
 

@@ -17,4 +17,9 @@ public interface ILightingVideoMonitorService extends IService<LightingVideoMoni
      * 根据区域查询视频列表
      */
     List<LightingVideoMonitor> listByArea(Long areaId);
+
+    /**
+     * 根据空间查询视频列表（按 sort 升序）
+     */
+    List<LightingVideoMonitor> listBySpace(Long spaceId);
 }

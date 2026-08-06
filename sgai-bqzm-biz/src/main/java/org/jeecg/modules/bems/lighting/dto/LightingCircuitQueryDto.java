@@ -9,6 +9,11 @@ public class LightingCircuitQueryDto {
      */
     private Long areaId;
 
+    /**
+     * 所属片区ID
+     */
+    private Long districtId;
+
     private Integer pageNo = 1;
 
     private Integer pageSize = 10;

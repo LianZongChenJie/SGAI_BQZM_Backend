@@ -5,6 +5,7 @@ import com.baomidou.mybatisplus.extension.service.IService;
 import org.jeecg.modules.bems.lighting.dto.LightingSceneDetailDto;
 import org.jeecg.modules.bems.lighting.dto.LightingSceneDto;
 import org.jeecg.modules.bems.lighting.dto.LightingSceneQueryDto;
+import org.jeecg.modules.bems.lighting.dto.LightingSpaceScenesVo;
 import org.jeecg.modules.bems.lighting.entity.LightingPlan;
 import org.jeecg.modules.bems.lighting.entity.LightingScene;
 
@@ -44,4 +45,12 @@ public interface ILightingSceneService extends IService<LightingScene> {
      * 一键执行场景：按明细逐个控制目标（区域/回路开或关），自动记录控制日志
      */
     void apply(Long id);
+
+    /**
+     * 按空间查询：该空间下的所有场景（含明细）和所有回路（含区域名/空间名）
+     * 场景归属规则：场景明细中任一目标（区域或回路）属于该空间即视为该空间的场景
+     *
+     * @param spaceId 空间id（lighting_area.space）
+     */
+    LightingSpaceScenesVo getBySpace(String spaceId);
 }

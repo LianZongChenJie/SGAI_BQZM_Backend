@@ -126,10 +126,35 @@ public class LightingHomeServiceImpl implements ILightingHomeService {
     @Override
     public void openAll() {
         List<LightingArea> list = areaService.list();
+        if (list.isEmpty()) {
+            return;
+        }
+        // 记录一键全开主日志
+        LightingOperationLog mainLog = new LightingOperationLog();
+        mainLog.setLogType(LightingOperationLog.LOG_TYPE_ONE_KEY);
+        mainLog.setParentId(null);
+        mainLog.setRelType("一键控制");
+        mainLog.setRelId(0L);
+        mainLog.setName("一键全开");
+        mainLog.setOperationTime(LocalDateTime.now());
+        mainLog.setOperationType("一键全开");
+        // 设置操作人
+        String operationBy = "照明计划";
+        try {
+            org.jeecg.common.system.vo.LoginUser sysUser = (org.jeecg.common.system.vo.LoginUser) org.apache.shiro.SecurityUtils.getSubject().getPrincipal();
+            if (sysUser != null) {
+                operationBy = sysUser.getUsername();
+            }
+        } catch (Exception e) {
+            // 异步场景中SecurityManager不可用，使用默认用户
+        }
+        mainLog.setOperationBy(operationBy);
+        lightingOperationLogService.save(mainLog);
+
+        // 逐个开启区域，挂在主日志下
         for (LightingArea area : list) {
             try {
-                lightingService.areaOpen(area.getSpace(), area.getAreaCode(), area.getOpenCode());
-                lightingOperationLogService.saveLog(LightingOperationLog.REL_TYPE_AREA, area.getId(), area.getAreaName(), LocalDateTime.now(), "区域全开");
+                areaService.open(area.getId(), mainLog.getId());
             } catch (Exception e) {
                 log.error("一键全开-区域[{}]开启失败", area.getAreaName(), e);
             }
@@ -139,10 +164,35 @@ public class LightingHomeServiceImpl implements ILightingHomeService {
     @Override
     public void closeAll() {
         List<LightingArea> list = areaService.list();
+        if (list.isEmpty()) {
+            return;
+        }
+        // 记录一键全关主日志
+        LightingOperationLog mainLog = new LightingOperationLog();
+        mainLog.setLogType(LightingOperationLog.LOG_TYPE_ONE_KEY);
+        mainLog.setParentId(null);
+        mainLog.setRelType("一键控制");
+        mainLog.setRelId(0L);
+        mainLog.setName("一键全关");
+        mainLog.setOperationTime(LocalDateTime.now());
+        mainLog.setOperationType("一键全关");
+        // 设置操作人
+        String operationBy = "照明计划";
+        try {
+            org.jeecg.common.system.vo.LoginUser sysUser = (org.jeecg.common.system.vo.LoginUser) org.apache.shiro.SecurityUtils.getSubject().getPrincipal();
+            if (sysUser != null) {
+                operationBy = sysUser.getUsername();
+            }
+        } catch (Exception e) {
+            // 异步场景中SecurityManager不可用，使用默认用户
+        }
+        mainLog.setOperationBy(operationBy);
+        lightingOperationLogService.save(mainLog);
+
+        // 逐个关闭区域，挂在主日志下
         for (LightingArea area : list) {
             try {
-                lightingService.areaClose(area.getSpace(), area.getAreaCode(), area.getCloseCode());
-                lightingOperationLogService.saveLog(LightingOperationLog.REL_TYPE_AREA, area.getId(), area.getAreaName(), LocalDateTime.now(), "区域全关");
+                areaService.close(area.getId(), mainLog.getId());
             } catch (Exception e) {
                 log.error("一键全关-区域[{}]关闭失败", area.getAreaName(), e);
             }

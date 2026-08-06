@@ -14,4 +14,9 @@ public class LightingAreaQueryDto {
     private String areaName;
 
     private String space;
+
+    /**
+     * 所属片区ID
+     */
+    private Long districtId;
 }

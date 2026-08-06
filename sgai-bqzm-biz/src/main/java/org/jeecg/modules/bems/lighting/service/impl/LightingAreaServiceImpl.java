@@ -1,6 +1,7 @@
 package org.jeecg.modules.bems.lighting.service.impl;
 
 import cn.hutool.core.collection.CollectionUtil;
+import com.baomidou.mybatisplus.core.conditions.Wrapper;
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.baomidou.mybatisplus.core.conditions.update.LambdaUpdateWrapper;
 import com.baomidou.mybatisplus.core.metadata.IPage;
@@ -12,10 +13,12 @@ import org.jeecg.common.exception.JeecgBootException;
 import org.jeecg.modules.bems.lighting.dto.LightingAreaQueryDto;
 import org.jeecg.modules.bems.lighting.entity.LightingArea;
 import org.jeecg.modules.bems.lighting.entity.LightingCircuit;
+import org.jeecg.modules.bems.lighting.entity.LightingDistrict;
 import org.jeecg.modules.bems.lighting.entity.LightingOperationLog;
 import org.jeecg.modules.bems.lighting.mapper.LightingAreaMapper;
 import org.jeecg.modules.bems.lighting.service.ILightingAreaService;
 import org.jeecg.modules.bems.lighting.service.ILightingCircuitService;
+import org.jeecg.modules.bems.lighting.service.ILightingDistrictService;
 import org.jeecg.modules.bems.lighting.service.ILightingOperationLogService;
 import org.jeecg.modules.bems.lighting.service.LightingService;
 import org.jeecg.modules.bems.lighting.mq.send.LightingSendService;
@@ -28,6 +31,10 @@ import java.time.LocalDateTime;
 import java.util.Collection;
 import java.util.Collections;
 import java.util.List;
+import java.util.Map;
+import java.util.Objects;
+import java.util.Set;
+import java.util.stream.Collectors;
 
 
 @Service
@@ -42,6 +49,8 @@ public class LightingAreaServiceImpl extends ServiceImpl<LightingAreaMapper, Lig
 
     private final LightingSendService sendService;
 
+    private final ILightingDistrictService districtService;
+
     /**
      * 注意：circuitService 与 LightingCircuitServiceImpl.areaService 存在循环依赖，
      * 必须在构造参数上用 @Lazy 打破（Lombok 的 @AllArgsConstructor 不会把字段上的 @Lazy 复制到构造参数上）
@@ -50,11 +59,13 @@ public class LightingAreaServiceImpl extends ServiceImpl<LightingAreaMapper, Lig
     public LightingAreaServiceImpl(LightingService service,
                                    ILightingOperationLogService lightingOperationLogService,
                                    @Lazy ILightingCircuitService circuitService,
-                                   LightingSendService sendService) {
+                                   LightingSendService sendService,
+                                   ILightingDistrictService districtService) {
         this.service = service;
         this.lightingOperationLogService = lightingOperationLogService;
         this.circuitService = circuitService;
         this.sendService = sendService;
+        this.districtService = districtService;
     }
 
     @Override
@@ -75,31 +86,67 @@ public class LightingAreaServiceImpl extends ServiceImpl<LightingAreaMapper, Lig
         LambdaQueryWrapper<LightingArea> queryWrapper = new LambdaQueryWrapper<LightingArea>()
                 .like(StringUtils.isNotEmpty(params.getRelName()),LightingArea::getRelName, params.getRelName())
                 .eq(StringUtils.isNotEmpty(params.getSpace()),LightingArea::getSpace,params.getSpace())
+                .eq(params.getDistrictId() != null,LightingArea::getDistrictId,params.getDistrictId())
                 .like(StringUtils.isNotEmpty(params.getAreaName()),LightingArea::getAreaName, params.getAreaName())
                 .orderByAsc(LightingArea::getSort);
-        return super.page(new Page<>(params.getPageNo(), params.getPageSize()),queryWrapper);
+        IPage<LightingArea> page = super.page(new Page<>(params.getPageNo(), params.getPageSize()),queryWrapper);
+        fillDistrictName(page.getRecords());
+        return page;
+    }
+
+    @Override
+    public List<LightingArea> list() {
+        List<LightingArea> list = super.list();
+        fillDistrictName(list);
+        return list;
+    }
+
+    @Override
+    public List<LightingArea> list(Wrapper<LightingArea> queryWrapper) {
+        List<LightingArea> list = super.list(queryWrapper);
+        fillDistrictName(list);
+        return list;
+    }
+
+    @Override
+    public LightingArea getById(java.io.Serializable id) {
+        LightingArea area = super.getById(id);
+        if(area != null){
+            fillDistrictName(Collections.singletonList(area));
+        }
+        return area;
     }
 
     /**
      * 区域-全开
      * @param id 区域id
-     * @return true-成功，false-失败
      */
     @Override
     @Transactional
     public void open(Long id) {
-        control(id,true);
+        control(id, true, null);
+    }
+
+    @Override
+    @Transactional
+    public void open(Long id, Long parentId) {
+        control(id, true, parentId);
     }
 
     /**
      * 区域-全关
      * @param id 区域id
-     * @return true-成功，false-失败
      */
     @Override
     @Transactional
     public void close(Long id) {
-        control(id,false);
+        control(id, false, null);
+    }
+
+    @Override
+    @Transactional
+    public void close(Long id, Long parentId) {
+        control(id, false, parentId);
     }
 
     /**
@@ -136,10 +183,35 @@ public class LightingAreaServiceImpl extends ServiceImpl<LightingAreaMapper, Lig
         if(CollectionUtil.isEmpty(ids)){
             return Collections.emptyList();
         }
-        return super.list(new LambdaQueryWrapper<LightingArea>().in(LightingArea::getId,ids));
+        List<LightingArea> list = super.list(new LambdaQueryWrapper<LightingArea>().in(LightingArea::getId,ids));
+        fillDistrictName(list);
+        return list;
     }
 
-    private void control(Long id, boolean type){
+    /**
+     * 回填片区名称
+     */
+    private void fillDistrictName(List<LightingArea> areas) {
+        if(CollectionUtil.isEmpty(areas)){
+            return;
+        }
+        Set<Long> districtIds = areas.stream()
+                .map(LightingArea::getDistrictId)
+                .filter(Objects::nonNull)
+                .collect(Collectors.toSet());
+        if(districtIds.isEmpty()){
+            return;
+        }
+        Map<Long, String> nameMap = districtService.listByIds(districtIds).stream()
+                .collect(Collectors.toMap(LightingDistrict::getId, LightingDistrict::getDistrictName, (a, b) -> a));
+        for(LightingArea area : areas){
+            if(area.getDistrictId() != null){
+                area.setDistrictName(nameMap.get(area.getDistrictId()));
+            }
+        }
+    }
+
+    private void control(Long id, boolean type, Long parentId){
         LightingArea area = super.getById(id);
         if(area == null){
             throw new JeecgBootException("区域不存在");
@@ -148,16 +220,56 @@ public class LightingAreaServiceImpl extends ServiceImpl<LightingAreaMapper, Lig
         // 1号馆（space=902）走新的MQ转发通道，不走老的KNX
         if("902".equals(area.getSpace())){
             control1hg(area, type);
-            lightingOperationLogService.saveLog(LightingOperationLog.REL_TYPE_AREA,id,area.getAreaName(), LocalDateTime.now(), type ? "区域全开" : "区域全关");
-            return;
+        } else {
+            if(type) {
+                service.areaOpen(area.getSpace(),area.getAreaCode(),area.getOpenCode());
+            }else {
+                service.areaClose(area.getSpace(),area.getAreaCode(),area.getCloseCode());
+            }
         }
 
-        if( type) {
-            service.areaOpen(area.getSpace(),area.getAreaCode(),area.getOpenCode());
-            lightingOperationLogService.saveLog(LightingOperationLog.REL_TYPE_AREA,id,area.getAreaName(), LocalDateTime.now(),"区域全开");
-        }else {
-            service.areaClose(area.getSpace(),area.getAreaCode(),area.getCloseCode());
-            lightingOperationLogService.saveLog(LightingOperationLog.REL_TYPE_AREA,id,area.getAreaName(), LocalDateTime.now(),"区域全关");
+        // 记录区域操作日志（logType=区域）
+        String operationType = type ? "区域全开" : "区域全关";
+        LightingOperationLog areaLog = new LightingOperationLog();
+        areaLog.setLogType(LightingOperationLog.LOG_TYPE_AREA);
+        areaLog.setParentId(parentId);
+        areaLog.setRelType(LightingOperationLog.REL_TYPE_AREA);
+        areaLog.setRelId(id);
+        areaLog.setName(area.getAreaName());
+        areaLog.setOperationTime(LocalDateTime.now());
+        areaLog.setOperationType(operationType);
+        // 设置操作人
+        String operationBy = "照明计划";
+        try {
+            org.jeecg.common.system.vo.LoginUser sysUser = (org.jeecg.common.system.vo.LoginUser) org.apache.shiro.SecurityUtils.getSubject().getPrincipal();
+            if (sysUser != null) {
+                operationBy = sysUser.getUsername();
+            }
+        } catch (Exception e) {
+            // 异步场景中SecurityManager不可用，使用默认用户
+        }
+        areaLog.setOperationBy(operationBy);
+        lightingOperationLogService.save(areaLog);
+
+        // 查询区域下所有回路，记录回路子日志
+        List<LightingCircuit> circuitList = circuitService.list(
+                new LambdaQueryWrapper<LightingCircuit>().eq(LightingCircuit::getAreaId, id));
+        if (CollectionUtil.isNotEmpty(circuitList)) {
+            List<LightingOperationLog> childLogs = new java.util.ArrayList<>();
+            String circuitOpType = type ? "回路开启" : "回路关闭";
+            for (LightingCircuit circuit : circuitList) {
+                LightingOperationLog childLog = new LightingOperationLog();
+                childLog.setLogType(LightingOperationLog.LOG_TYPE_CIRCUIT);
+                childLog.setParentId(areaLog.getId());
+                childLog.setRelType(LightingOperationLog.REL_TYPE_CIRCUIT);
+                childLog.setRelId(circuit.getId());
+                childLog.setName(area.getAreaName() + "-" + circuit.getCircuitName());
+                childLog.setOperationTime(LocalDateTime.now());
+                childLog.setOperationType(circuitOpType);
+                childLog.setOperationBy(operationBy);
+                childLogs.add(childLog);
+            }
+            lightingOperationLogService.saveBatchLog(childLogs);
         }
     }
 
@@ -176,7 +288,7 @@ public class LightingAreaServiceImpl extends ServiceImpl<LightingAreaMapper, Lig
             return;
         }
 
-        String value = type ? "100" : "0";
+        String value = type ? "1" : "0";
         log.info("【1号馆】区域控制：areaName={}, 操作={}, 回路数={}", area.getAreaName(), type ? "全开" : "全关", circuitList.size());
 
         for(LightingCircuit circuit : circuitList){

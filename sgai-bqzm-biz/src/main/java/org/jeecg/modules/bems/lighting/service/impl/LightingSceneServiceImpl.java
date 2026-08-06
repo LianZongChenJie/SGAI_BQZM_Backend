@@ -12,22 +12,29 @@ import org.jeecg.common.exception.JeecgBootException;
 import org.jeecg.modules.bems.lighting.dto.LightingSceneDetailDto;
 import org.jeecg.modules.bems.lighting.dto.LightingSceneDto;
 import org.jeecg.modules.bems.lighting.dto.LightingSceneQueryDto;
+import org.jeecg.modules.bems.lighting.dto.LightingSpaceScenesVo;
 import org.jeecg.modules.bems.lighting.entity.LightingArea;
 import org.jeecg.modules.bems.lighting.entity.LightingCircuit;
 import org.jeecg.modules.bems.lighting.entity.LightingPlan;
+import org.jeecg.modules.bems.lighting.entity.LightingOperationLog;
 import org.jeecg.modules.bems.lighting.entity.LightingScene;
 import org.jeecg.modules.bems.lighting.entity.LightingSceneDetail;
 import org.jeecg.modules.bems.lighting.mapper.LightingSceneDetailMapper;
 import org.jeecg.modules.bems.lighting.mapper.LightingSceneMapper;
 import org.jeecg.modules.bems.lighting.service.ILightingAreaService;
 import org.jeecg.modules.bems.lighting.service.ILightingCircuitService;
+import org.jeecg.modules.bems.lighting.service.ILightingOperationLogService;
 import org.jeecg.modules.bems.lighting.service.ILightingSceneService;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.util.ArrayList;
+import java.util.Collections;
+import java.util.Comparator;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import java.util.function.Function;
 import java.util.stream.Collectors;
 
@@ -46,6 +53,8 @@ public class LightingSceneServiceImpl extends ServiceImpl<LightingSceneMapper, L
     private final ILightingAreaService lightingAreaService;
 
     private final ILightingCircuitService lightingCircuitService;
+
+    private final ILightingOperationLogService lightingOperationLogService;
 
     @Override
     public IPage<LightingPlan> listPage(LightingSceneQueryDto params) {
@@ -234,12 +243,36 @@ public class LightingSceneServiceImpl extends ServiceImpl<LightingSceneMapper, L
         if (CollectionUtil.isEmpty(details)) {
             throw new JeecgBootException("场景下没有控制目标，请先添加明细");
         }
+
+        // 记录场景操作日志（父日志）
+        String operationType = details.get(0).getOperationType();
+        LightingOperationLog sceneLog = new LightingOperationLog();
+        sceneLog.setLogType(LightingOperationLog.LOG_TYPE_SCENE);
+        sceneLog.setParentId(null);
+        sceneLog.setRelType("场景");
+        sceneLog.setRelId(id);
+        sceneLog.setName(scene.getSceneName());
+        sceneLog.setOperationTime(java.time.LocalDateTime.now());
+        sceneLog.setOperationType("场景" + operationType);
+        // 设置操作人
+        String operationBy = "照明计划";
+        try {
+            org.jeecg.common.system.vo.LoginUser sysUser = (org.jeecg.common.system.vo.LoginUser) org.apache.shiro.SecurityUtils.getSubject().getPrincipal();
+            if (sysUser != null) {
+                operationBy = sysUser.getUsername();
+            }
+        } catch (Exception e) {
+            // 异步场景中SecurityManager不可用，使用默认用户
+        }
+        sceneLog.setOperationBy(operationBy);
+        lightingOperationLogService.save(sceneLog);
+
         log.info("开始执行场景【{}】, 目标数：{}", scene.getSceneName(), details.size());
         for (LightingSceneDetail detail : details) {
             if (LightingScene.REL_TYPE_AREA.equals(detail.getRelType())) {
-                executeArea(detail);
+                executeArea(detail, sceneLog.getId());
             } else if (LightingScene.REL_TYPE_CIRCUIT.equals(detail.getRelType())) {
-                executeCircuit(detail);
+                executeCircuit(detail, sceneLog.getId());
             } else {
                 throw new JeecgBootException("场景明细 relType 必须为 区域 或 回路");
             }
@@ -249,11 +282,11 @@ public class LightingSceneServiceImpl extends ServiceImpl<LightingSceneMapper, L
     /**
      * 区域目标开/关（内部复用区域控制逻辑，自动记录控制日志，操作人为当前登录用户）
      */
-    private void executeArea(LightingSceneDetail detail) {
+    private void executeArea(LightingSceneDetail detail, Long parentId) {
         if (LightingScene.OPERATION_TYPE_OPEN.equals(detail.getOperationType())) {
-            lightingAreaService.open(detail.getRelId());
+            lightingAreaService.open(detail.getRelId(), parentId);
         } else if (LightingScene.OPERATION_TYPE_CLOSE.equals(detail.getOperationType())) {
-            lightingAreaService.close(detail.getRelId());
+            lightingAreaService.close(detail.getRelId(), parentId);
         } else {
             throw new JeecgBootException("场景明细 operationType 必须为 开启 或 关闭");
         }
@@ -262,11 +295,11 @@ public class LightingSceneServiceImpl extends ServiceImpl<LightingSceneMapper, L
     /**
      * 回路目标开/关（内部复用回路控制逻辑，自动记录控制日志，操作人为当前登录用户）
      */
-    private void executeCircuit(LightingSceneDetail detail) {
+    private void executeCircuit(LightingSceneDetail detail, Long parentId) {
         if (LightingScene.OPERATION_TYPE_OPEN.equals(detail.getOperationType())) {
-            lightingCircuitService.open(detail.getRelId());
+            lightingCircuitService.open(detail.getRelId(), parentId);
         } else if (LightingScene.OPERATION_TYPE_CLOSE.equals(detail.getOperationType())) {
-            lightingCircuitService.close(detail.getRelId());
+            lightingCircuitService.close(detail.getRelId(), parentId);
         } else {
             throw new JeecgBootException("场景明细 operationType 必须为 开启 或 关闭");
         }
@@ -429,5 +462,93 @@ public class LightingSceneServiceImpl extends ServiceImpl<LightingSceneMapper, L
         Page<LightingScene> page = super.page(new Page<>(1, 1, false),
                 new LambdaQueryWrapper<LightingScene>().orderByDesc(LightingScene::getSort));
         return CollectionUtil.isNotEmpty(page.getRecords()) ? page.getRecords().get(0).getSort() : 0;
+    }
+
+    /**
+     * 按空间查询：该空间下的所有场景（含明细）和所有回路（含区域名/空间名）。
+     * 场景归属规则：场景明细中任一目标（区域或回路）属于该空间即视为该空间的场景。
+     * 注意：areaIds/circuitIds 为空时必须短路返回，避免 MyBatis-Plus 的 in(condition=false, ...) 跳过条件查出全表数据。
+     */
+    @Override
+    public LightingSpaceScenesVo getBySpace(String spaceId) {
+        if (StringUtils.isBlank(spaceId)) {
+            throw new JeecgBootException("spaceId 不能为空");
+        }
+        LightingSpaceScenesVo vo = new LightingSpaceScenesVo();
+        vo.setSpaceId(spaceId);
+
+        // 1. 空间下所有区域
+        List<LightingArea> areas = lightingAreaService.list(
+                new LambdaQueryWrapper<LightingArea>().eq(LightingArea::getSpace, spaceId));
+        String spaceName = null;
+        for (LightingArea area : areas) {
+            if (StringUtils.isNotEmpty(area.getSpaceName())) {
+                spaceName = area.getSpaceName();
+                break;
+            }
+        }
+        vo.setSpaceName(spaceName);
+        List<Long> areaIds = areas.stream().map(LightingArea::getId).collect(Collectors.toList());
+        Map<Long, LightingArea> areaMap = areas.stream()
+                .collect(Collectors.toMap(LightingArea::getId, Function.identity(), (a, b) -> a));
+
+        // 2. 空间下所有回路（areaId 属于该空间），回填区域名/空间名
+        List<LightingCircuit> circuits = Collections.emptyList();
+        if (CollectionUtil.isNotEmpty(areaIds)) {
+            circuits = lightingCircuitService.list(
+                    new LambdaQueryWrapper<LightingCircuit>()
+                            .in(LightingCircuit::getAreaId, areaIds)
+                            .orderByAsc(LightingCircuit::getAreaId)
+                            .orderByAsc(LightingCircuit::getId));
+            for (LightingCircuit circuit : circuits) {
+                LightingArea area = areaMap.get(circuit.getAreaId());
+                if (area != null) {
+                    circuit.setAreaName(area.getAreaName());
+                    circuit.setSpaceName(area.getSpaceName());
+                }
+            }
+        }
+        vo.setCircuits(circuits);
+        List<Long> circuitIds = circuits.stream().map(LightingCircuit::getId).collect(Collectors.toList());
+
+        // 3. 空间下所有场景：明细目标是该空间的区域或回路
+        if (CollectionUtil.isEmpty(areaIds) && CollectionUtil.isEmpty(circuitIds)) {
+            vo.setScenes(Collections.emptyList());
+            return vo;
+        }
+        Set<Long> sceneIds = new HashSet<>();
+        if (CollectionUtil.isNotEmpty(areaIds)) {
+            List<LightingSceneDetail> areaDetails = detailMapper.selectList(
+                    new LambdaQueryWrapper<LightingSceneDetail>()
+                            .eq(LightingSceneDetail::getRelType, LightingScene.REL_TYPE_AREA)
+                            .in(LightingSceneDetail::getRelId, areaIds));
+            areaDetails.forEach(d -> sceneIds.add(d.getSceneId()));
+        }
+        if (CollectionUtil.isNotEmpty(circuitIds)) {
+            List<LightingSceneDetail> circuitDetails = detailMapper.selectList(
+                    new LambdaQueryWrapper<LightingSceneDetail>()
+                            .eq(LightingSceneDetail::getRelType, LightingScene.REL_TYPE_CIRCUIT)
+                            .in(LightingSceneDetail::getRelId, circuitIds));
+            circuitDetails.forEach(d -> sceneIds.add(d.getSceneId()));
+        }
+        if (sceneIds.isEmpty()) {
+            vo.setScenes(Collections.emptyList());
+            return vo;
+        }
+
+        List<LightingScene> scenes = super.listByIds(sceneIds);
+        // 批量加载这些场景的全部明细（场景整体返回，前端按场景一键执行）
+        Map<Long, List<LightingSceneDetail>> detailMap = detailMapper.selectList(
+                        new LambdaQueryWrapper<LightingSceneDetail>()
+                                .in(LightingSceneDetail::getSceneId, sceneIds)
+                                .orderByAsc(LightingSceneDetail::getSort))
+                .stream()
+                .collect(Collectors.groupingBy(LightingSceneDetail::getSceneId));
+        for (LightingScene scene : scenes) {
+            scene.setDetails(detailMap.getOrDefault(scene.getId(), Collections.emptyList()));
+        }
+        scenes.sort(Comparator.comparing(LightingScene::getSort, Comparator.nullsLast(Long::compareTo)));
+        vo.setScenes(scenes);
+        return vo;
     }
 }

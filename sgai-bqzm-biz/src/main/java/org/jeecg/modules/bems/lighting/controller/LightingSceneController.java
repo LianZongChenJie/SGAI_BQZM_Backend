@@ -8,6 +8,7 @@ import org.jeecg.common.api.vo.Result;
 import org.jeecg.modules.bems.lighting.dto.LightingSceneDetailDto;
 import org.jeecg.modules.bems.lighting.dto.LightingSceneDto;
 import org.jeecg.modules.bems.lighting.dto.LightingSceneQueryDto;
+import org.jeecg.modules.bems.lighting.dto.LightingSpaceScenesVo;
 import org.jeecg.modules.bems.lighting.entity.LightingPlan;
 import org.jeecg.modules.bems.lighting.service.ILightingSceneService;
 import org.springframework.web.bind.annotation.*;
@@ -81,5 +82,14 @@ public class LightingSceneController {
     public Result<String> apply(@RequestParam Long id) {
         service.apply(id);
         return Result.ok();
+    }
+
+    /**
+     * 按空间查询：该空间下的所有场景（含明细）和所有回路（含区域名/空间名）
+     */
+    @ApiOperation("按空间查询场景和回路（spaceId 传 lighting_area.space，如 1/2/3/4/901/902）")
+    @GetMapping("/space")
+    public Result<LightingSpaceScenesVo> space(@RequestParam String spaceId) {
+        return Result.ok(service.getBySpace(spaceId));
     }
 }

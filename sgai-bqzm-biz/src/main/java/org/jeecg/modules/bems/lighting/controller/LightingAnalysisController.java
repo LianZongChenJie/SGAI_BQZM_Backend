@@ -35,9 +35,9 @@ public class LightingAnalysisController {
         return Result.ok(analysisService.getAreaRunTime(startTime, endTime));
     }
 
-    @ApiOperation("运行时长对比")
+    @ApiOperation("运行时长对比（按地块分组：地块/回路数/总运行时长/平均时长/同比）")
     @GetMapping("/runTimeCompare")
-    public Result<List<AreaRunTimeVo>> runTimeCompare(
+    public Result<List<AreaRunTimeCompareVo>> runTimeCompare(
             @RequestParam(required = false) List<Long> areaIds,
             @DateTimeFormat(pattern = "yyyy-MM-dd HH:mm:ss") LocalDateTime startTime,
             @DateTimeFormat(pattern = "yyyy-MM-dd HH:mm:ss") LocalDateTime endTime) {

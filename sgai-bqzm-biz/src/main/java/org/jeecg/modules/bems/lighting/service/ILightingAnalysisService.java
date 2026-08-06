@@ -20,9 +20,9 @@ public interface ILightingAnalysisService {
     List<AreaRunTimeVo> getAreaRunTime(LocalDateTime startTime, LocalDateTime endTime);
 
     /**
-     * 运行时长对比
+     * 运行时长对比（按地块 spaceName 分组：地块/回路数/总运行时长/平均时长/同比）
      */
-    List<AreaRunTimeVo> getRunTimeCompare(List<Long> areaIds, LocalDateTime startTime, LocalDateTime endTime);
+    List<AreaRunTimeCompareVo> getRunTimeCompare(List<Long> areaIds, LocalDateTime startTime, LocalDateTime endTime);
 
     // ========== 用电量 ==========
 

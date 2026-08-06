@@ -17,8 +17,11 @@ import java.math.RoundingMode;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.time.format.DateTimeFormatter;
+import java.time.temporal.ChronoUnit;
 import java.util.ArrayList;
+import java.util.Collections;
 import java.util.Comparator;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.stream.Collectors;
@@ -65,30 +68,54 @@ public class LightingAnalysisServiceImpl implements ILightingAnalysisService {
     }
 
     @Override
-    public List<AreaRunTimeVo> getRunTimeCompare(List<Long> areaIds, LocalDateTime startTime, LocalDateTime endTime) {
+    public List<AreaRunTimeCompareVo> getRunTimeCompare(List<Long> areaIds, LocalDateTime startTime, LocalDateTime endTime) {
+        List<LightingArea> areas = (areaIds != null && !areaIds.isEmpty())
+                ? areaService.listByIds(areaIds)
+                : areaService.list();
         List<LightingCircuit> circuits = circuitService.list();
-        List<LightingArea> areas;
 
-        if (areaIds != null && !areaIds.isEmpty()) {
-            areas = areaService.listByIds(areaIds);
-        } else {
-            areas = areaService.list();
+        // 回路按区域分组
+        Map<Long, List<LightingCircuit>> circuitByArea = circuits.stream()
+                .collect(Collectors.groupingBy(LightingCircuit::getAreaId));
+
+        // 统计天数（用于平均时长，至少 1 天）
+        LocalDateTime start = startTime != null ? startTime
+                : LocalDateTime.now().withDayOfMonth(1).withHour(0).withMinute(0).withSecond(0);
+        LocalDateTime end = endTime != null ? endTime : LocalDateTime.now();
+        long days = Math.max(1, ChronoUnit.DAYS.between(start.toLocalDate(), end.toLocalDate()) + 1);
+
+        // 按地块（spaceName）分组累计
+        Map<String, SpaceAgg> aggMap = new LinkedHashMap<>();
+        for (LightingArea area : areas) {
+            String spaceName = (area.getSpaceName() == null || area.getSpaceName().isEmpty())
+                    ? area.getAreaName() : area.getSpaceName();
+            String key = (area.getSpace() == null ? "" : area.getSpace()) + "|" + (spaceName == null ? "" : spaceName);
+            SpaceAgg agg = aggMap.computeIfAbsent(key, k -> new SpaceAgg(area.getSpace(), spaceName));
+            List<LightingCircuit> areaCircuits = circuitByArea.getOrDefault(area.getId(), Collections.emptyList());
+            agg.circuitCount += areaCircuits.size();
+            for (LightingCircuit circuit : areaCircuits) {
+                agg.totalSeconds += (circuit.getAllDuration() != null ? circuit.getAllDuration() : 0L);
+            }
         }
 
-        Map<Long, Double> areaRunTimeMap = circuits.stream()
-                .collect(Collectors.groupingBy(
-                        LightingCircuit::getAreaId,
-                        Collectors.summingDouble(c -> c.getTotalRunTime() != null ? c.getTotalRunTime() : 0.0)
-                ));
-
-        List<AreaRunTimeVo> result = new ArrayList<>();
-        for (LightingArea area : areas) {
-            AreaRunTimeVo vo = new AreaRunTimeVo();
-            vo.setAreaId(area.getId());
-            vo.setAreaName(area.getAreaName());
-            vo.setRunTime(areaRunTimeMap.getOrDefault(area.getId(), 0.0));
+        List<AreaRunTimeCompareVo> result = new ArrayList<>();
+        for (SpaceAgg agg : aggMap.values()) {
+            AreaRunTimeCompareVo vo = new AreaRunTimeCompareVo();
+            vo.setSpace(agg.space);
+            vo.setSpaceName(agg.spaceName);
+            vo.setCircuitCount((long) agg.circuitCount);
+            double totalHours = agg.totalSeconds / 3600.0;
+            vo.setTotalRunTime(round1(totalHours));
+            double avgRunTime = agg.circuitCount > 0 ? totalHours / (agg.circuitCount * days) : 0.0;
+            vo.setAvgRunTime(round1(avgRunTime));
+            // 同比：当前系统无历史运行时长数据源（totalRunTime 未维护），暂无值，待接入历史数据后计算
+            vo.setYoy(null);
             result.add(vo);
         }
+
+        // 按总运行时长倒序
+        result.sort(Comparator.comparing(AreaRunTimeCompareVo::getTotalRunTime,
+                Comparator.nullsLast(Comparator.reverseOrder())));
         return result;
     }
 
@@ -238,6 +265,10 @@ public class LightingAnalysisServiceImpl implements ILightingAnalysisService {
 
     // ========== 私有方法 ==========
 
+    private double round1(double value) {
+        return BigDecimal.valueOf(value).setScale(1, RoundingMode.HALF_UP).doubleValue();
+    }
+
     private EnergyCostVo buildCostVo(String type, String name, BigDecimal amount, BigDecimal total) {
         EnergyCostVo vo = new EnergyCostVo();
         vo.setCostType(type);
@@ -248,5 +279,20 @@ public class LightingAnalysisServiceImpl implements ILightingAnalysisService {
                         .divide(total, 1, RoundingMode.HALF_UP)
                 : BigDecimal.ZERO);
         return vo;
+    }
+
+    /**
+     * 地块维度聚合（按 space+spaceName 分组）
+     */
+    private static class SpaceAgg {
+        private final String space;
+        private final String spaceName;
+        private int circuitCount;
+        private long totalSeconds;
+
+        private SpaceAgg(String space, String spaceName) {
+            this.space = space;
+            this.spaceName = spaceName;
+        }
     }
 }

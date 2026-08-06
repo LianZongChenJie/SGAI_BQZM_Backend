@@ -12,6 +12,7 @@ import org.jeecg.modules.bems.lighting.dto.LightingPlanDetailDto;
 import org.jeecg.modules.bems.lighting.dto.LightingPlanQueryDto;
 import org.jeecg.modules.bems.lighting.entity.LightingArea;
 import org.jeecg.modules.bems.lighting.entity.LightingCircuit;
+import org.jeecg.modules.bems.lighting.entity.LightingOperationLog;
 import org.jeecg.modules.bems.lighting.entity.LightingPlan;
 import org.jeecg.modules.bems.lighting.entity.LightingPlanExecutionTime;
 import org.jeecg.modules.bems.lighting.mapper.LightingPlanMapper;
@@ -41,6 +42,8 @@ public class LightingPlanServiceImpl extends ServiceImpl<LightingPlanMapper, Lig
     private final ILightingPlanExecutionTimeService executionTimeService;
 
     private final ILightingSceneService lightingSceneService;
+
+    private final ILightingOperationLogService lightingOperationLogService;
 
 
     @Override
@@ -142,13 +145,26 @@ public class LightingPlanServiceImpl extends ServiceImpl<LightingPlanMapper, Lig
             log.error("当前时间与计划执行时间相差>300秒，执行失败。计划id：" + id);
             return;
         }
+
+        // 记录定时任务操作日志（父日志）
+        LightingOperationLog planLog = new LightingOperationLog();
+        planLog.setLogType(LightingOperationLog.LOG_TYPE_PLAN);
+        planLog.setParentId(null);
+        planLog.setRelType("定时任务");
+        planLog.setRelId(id);
+        planLog.setName(plan.getPlanName());
+        planLog.setOperationTime(java.time.LocalDateTime.now());
+        planLog.setOperationType("定时任务" + plan.getOperationType());
+        planLog.setOperationBy("照明计划");
+        lightingOperationLogService.save(planLog);
+
         Set<Long> relIds = Arrays.stream(plan.getRelIds().split(",")).map(Long::parseLong).collect(Collectors.toSet());
         if(LightingPlan.REL_TYPE_AREA.equals(plan.getRelType())){
             // 区域（场景）
-            executeArea(relIds,plan.getOperationType());
+            executeArea(relIds, plan.getOperationType(), planLog.getId());
         }else if(LightingPlan.REL_TYPE_CIRCUIT.equals(plan.getRelType())){
             // 回路
-            executeCircuit(relIds,plan.getOperationType());
+            executeCircuit(relIds, plan.getOperationType(), planLog.getId());
         }
 
     }
@@ -202,22 +218,22 @@ public class LightingPlanServiceImpl extends ServiceImpl<LightingPlanMapper, Lig
         super.updateById(plan);
     }
 
-    private void executeArea(Collection<Long> areaIds,String operationType){
+    private void executeArea(Collection<Long> areaIds, String operationType, Long parentId){
         for(Long areaId : areaIds){
             if(LightingPlan.OPERATION_TYPE_OPEN.equals(operationType)){
-                lightingAreaService.open(areaId);
+                lightingAreaService.open(areaId, parentId);
             }else if(LightingPlan.OPERATION_TYPE_CLOSE.equals(operationType)){
-                lightingAreaService.close(areaId);
+                lightingAreaService.close(areaId, parentId);
             }
         }
     }
 
-    private void executeCircuit(Collection<Long> circuitIds,String operationType){
+    private void executeCircuit(Collection<Long> circuitIds, String operationType, Long parentId){
         for(Long circuitId : circuitIds){
             if(LightingPlan.OPERATION_TYPE_OPEN.equals(operationType)){
-                lightingCircuitService.open(circuitId);
+                lightingCircuitService.open(circuitId, parentId);
             }else if(LightingPlan.OPERATION_TYPE_CLOSE.equals(operationType)){
-                lightingCircuitService.close(circuitId);
+                lightingCircuitService.close(circuitId, parentId);
             }
         }
     }
@@ -300,13 +316,36 @@ public class LightingPlanServiceImpl extends ServiceImpl<LightingPlanMapper, Lig
 //            scheduleJobService.executeOnce(plan.getScheduleJobId());
             return;
         }
+
+        // 记录定时任务操作日志（父日志）
+        LightingOperationLog planLog = new LightingOperationLog();
+        planLog.setLogType(LightingOperationLog.LOG_TYPE_PLAN);
+        planLog.setParentId(null);
+        planLog.setRelType("定时任务");
+        planLog.setRelId(id);
+        planLog.setName(plan.getPlanName());
+        planLog.setOperationTime(java.time.LocalDateTime.now());
+        planLog.setOperationType("定时任务" + plan.getOperationType());
+        // 手动立即执行，取当前登录用户
+        String operationBy = "照明计划";
+        try {
+            org.jeecg.common.system.vo.LoginUser sysUser = (org.jeecg.common.system.vo.LoginUser) org.apache.shiro.SecurityUtils.getSubject().getPrincipal();
+            if (sysUser != null) {
+                operationBy = sysUser.getUsername();
+            }
+        } catch (Exception e) {
+            // 异步场景中SecurityManager不可用，使用默认用户
+        }
+        planLog.setOperationBy(operationBy);
+        lightingOperationLogService.save(planLog);
+
         Set<Long> relIds = Arrays.stream(plan.getRelIds().split(",")).map(Long::parseLong).collect(Collectors.toSet());
         if(LightingPlan.REL_TYPE_AREA.equals(plan.getRelType())){
             // 区域（场景）
-            executeArea(relIds,plan.getOperationType());
+            executeArea(relIds, plan.getOperationType(), planLog.getId());
         }else if(LightingPlan.REL_TYPE_CIRCUIT.equals(plan.getRelType())){
             // 回路
-            executeCircuit(relIds,plan.getOperationType());
+            executeCircuit(relIds, plan.getOperationType(), planLog.getId());
         }
     }
 
@@ -381,11 +420,11 @@ public class LightingPlanServiceImpl extends ServiceImpl<LightingPlanMapper, Lig
 
             // 走原来的逻辑
             if(!normalIds.isEmpty()){
-                executeArea(normalIds, op);
+                executeArea(normalIds, op, null);
             }
         }else if(LightingPlan.REL_TYPE_CIRCUIT.equals(relType)){
             // 回路批量开启/关闭
-            executeCircuit(ids, op);
+            executeCircuit(ids, op, null);
         }else{
             throw new JeecgBootException("relType 必须为 区域 或 回路");
         }
