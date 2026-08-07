@@ -46,6 +46,10 @@ public class LightingPlanJob {
         LocalDate tomorrow = LocalDate.now().plusDays(1);
         for(LightingPlan plan : plans){
             try {
+                // 定时任务同步的计划由动态调度器执行，老引擎不重复发 MQ
+                if(plan.getScheduleJobId() != null){
+                    continue;
+                }
                 LightingPlanExecutionTime data = planExecutionTimeMap.get(plan.getId());
                 if(!LightingPlan.STATUS_ENABLE.equals(plan.getStatus()) || data == null){
                     continue;
@@ -65,7 +69,7 @@ public class LightingPlanJob {
                     continue;
                 }
 
-                sendService.sendPlan(plan.getId(),data.getVersion(),tomorrow.atTime(data.getExecutionLocalTime()));
+                sendService.sendPlan(plan.getId(),plan.getPlanName(),data.getVersion(),tomorrow.atTime(data.getExecutionLocalTime()));
             }catch (Exception e){
                 log.error("计划执行时间格式错误。计划id:{}", plan.getId());
             }

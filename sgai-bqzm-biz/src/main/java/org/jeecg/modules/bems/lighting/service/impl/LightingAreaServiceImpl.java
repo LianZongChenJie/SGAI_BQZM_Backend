@@ -220,6 +220,9 @@ public class LightingAreaServiceImpl extends ServiceImpl<LightingAreaMapper, Lig
         // 1号馆（space=902）走新的MQ转发通道，不走老的KNX
         if("902".equals(area.getSpace())){
             control1hg(area, type);
+        } else if("903".equals(area.getSpace())){
+            // 北区（space=903）走新的MQ转发通道
+            controlBq(area, type);
         } else {
             if(type) {
                 service.areaOpen(area.getSpace(),area.getAreaCode(),area.getOpenCode());
@@ -313,5 +316,39 @@ public class LightingAreaServiceImpl extends ServiceImpl<LightingAreaMapper, Lig
         }
 
         log.info("【1号馆】区域控制完成：areaName={}, 操作={}", area.getAreaName(), type ? "全开" : "全关");
+    }
+
+    /**
+     * 北区（space=903）区域控制（走MQ转发小程序通道）
+     * 遍历区域下所有回路，逐个发送控制消息
+     */
+    private void controlBq(LightingArea area, boolean type){
+        // 查询区域下所有回路
+        LambdaQueryWrapper<LightingCircuit> wrapper = new LambdaQueryWrapper<>();
+        wrapper.eq(LightingCircuit::getAreaId, area.getId());
+        java.util.List<LightingCircuit> circuitList = circuitService.list(wrapper);
+
+        if(CollectionUtil.isEmpty(circuitList)){
+            log.warn("【北区】区域下没有回路，areaId={}, areaName={}", area.getId(), area.getAreaName());
+            return;
+        }
+
+        String value = type ? "100" : "0";
+        log.info("【北区】区域控制：areaName={}, 操作={}, 回路数={}", area.getAreaName(), type ? "全开" : "全关", circuitList.size());
+
+        for(LightingCircuit circuit : circuitList){
+            try {
+                String circuitCode = circuit.getCircuitCode();
+                if(StringUtils.isEmpty(circuitCode)){
+                    continue;
+                }
+
+                sendService.sendBqControl(circuitCode, value);
+            } catch (Exception e){
+                log.error("【北区】发送回路控制消息失败：circuitId={}, circuitName={}", circuit.getId(), circuit.getCircuitName(), e);
+            }
+        }
+
+        log.info("【北区】区域控制完成：areaName={}, 操作={}", area.getAreaName(), type ? "全开" : "全关");
     }
 }

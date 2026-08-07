@@ -103,6 +103,30 @@ public class LightingExchangeQueueConfig {
         return new Queue(LightingMqConstant.QUEUE_LIGHTING_LISTENER_1HG,true);
     }
 
+    /**
+     * 北区（space=903）控制消息发送队列 - 11号网关
+     */
+    @Bean
+    public Queue lightingSendBq11(){
+        return new Queue(LightingMqConstant.QUEUE_LIGHTING_SEND_BQ_11,true);
+    }
+
+    /**
+     * 北区（space=903）控制消息发送队列 - 12号网关
+     */
+    @Bean
+    public Queue lightingSendBq12(){
+        return new Queue(LightingMqConstant.QUEUE_LIGHTING_SEND_BQ_12,true);
+    }
+
+    /**
+     * 北区（space=903）状态反馈队列
+     */
+    @Bean
+    public Queue lightingListenerBq(){
+        return new Queue(LightingMqConstant.QUEUE_LIGHTING_LISTENER_BQ,true);
+    }
+
 
     /**
      * 照明计划队列绑定

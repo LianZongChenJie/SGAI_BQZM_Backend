@@ -28,6 +28,16 @@ public class LightingSceneQueryDto {
      */
     private String status;
 
+    /**
+     * 标签ID（精确匹配）
+     */
+    private String tagId;
+
+    /**
+     * 标签名称（模糊匹配）
+     */
+    private String tagName;
+
     private Integer pageNo = 1;
 
     private Integer pageSize = 10;

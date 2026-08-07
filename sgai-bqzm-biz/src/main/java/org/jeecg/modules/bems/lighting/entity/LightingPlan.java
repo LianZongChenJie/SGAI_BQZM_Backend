@@ -111,6 +111,18 @@ public class LightingPlan extends BaseEntity {
     @TableField(exist = false)
     private LightingPlanExecutionTime executionInfo;
 
+    /**
+     * 标签ID（非表字段，场景列表出参展示用，照明计划本身无标签）
+     */
+    @TableField(exist = false)
+    private String tagId;
+
+    /**
+     * 标签名称（非表字段，场景列表出参展示用，照明计划本身无标签）
+     */
+    @TableField(exist = false)
+    private String tagName;
+
 
     public LocalTime getExecutionLocalTime(){
         if(StringUtils.isEmpty(executionTime)){

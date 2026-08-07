@@ -65,6 +65,8 @@ public class LightingSceneServiceImpl extends ServiceImpl<LightingSceneMapper, L
                         .like(StringUtils.isNotEmpty(name), LightingScene::getSceneName, name)
                         .eq(StringUtils.isNotEmpty(params.getSceneType()), LightingScene::getSceneType, params.getSceneType())
                         .eq(StringUtils.isNotEmpty(params.getStatus()), LightingScene::getStatus, params.getStatus())
+                        .eq(StringUtils.isNotEmpty(params.getTagId()), LightingScene::getTagId, params.getTagId())
+                        .like(StringUtils.isNotEmpty(params.getTagName()), LightingScene::getTagName, params.getTagName())
                         .orderByAsc(LightingScene::getSort)
         );
         List<LightingScene> scenes = scenePage.getRecords();
@@ -97,6 +99,8 @@ public class LightingSceneServiceImpl extends ServiceImpl<LightingSceneMapper, L
         plan.setStatus(scene.getStatus());
         plan.setSort(scene.getSort());
         plan.setRemark(scene.getRemark());
+        plan.setTagId(scene.getTagId());
+        plan.setTagName(scene.getTagName());
         plan.setCreateBy(scene.getCreateBy());
         plan.setCreateTime(scene.getCreateTime());
         plan.setUpdateBy(scene.getUpdateBy());
@@ -128,6 +132,8 @@ public class LightingSceneServiceImpl extends ServiceImpl<LightingSceneMapper, L
         scene.setStatus(LightingScene.STATUS_ENABLE);
         scene.setSort(dto.getSort() == null ? getMaxSort() + 1 : dto.getSort());
         scene.setRemark(dto.getRemark());
+        scene.setTagId(dto.getTagId());
+        scene.setTagName(dto.getTagName());
         super.save(scene);
         saveDetails(scene.getId(), dto.getDetails());
     }
@@ -150,6 +156,8 @@ public class LightingSceneServiceImpl extends ServiceImpl<LightingSceneMapper, L
         scene.setSceneType(StringUtils.isEmpty(dto.getSceneType()) ? old.getSceneType() : dto.getSceneType());
         scene.setSort(dto.getSort());
         scene.setRemark(dto.getRemark());
+        scene.setTagId(dto.getTagId());
+        scene.setTagName(dto.getTagName());
         super.updateById(scene);
         // 先删后插明细
         detailMapper.delete(new LambdaQueryWrapper<LightingSceneDetail>().eq(LightingSceneDetail::getSceneId, dto.getId()));
@@ -188,6 +196,8 @@ public class LightingSceneServiceImpl extends ServiceImpl<LightingSceneMapper, L
         dto.setId(scene.getId());
         dto.setPlanName(scene.getSceneName());
         dto.setStatus(scene.getStatus());
+        dto.setTagId(scene.getTagId());
+        dto.setTagName(scene.getTagName());
         if (CollectionUtil.isNotEmpty(details)) {
             LightingSceneDetail first = details.get(0);
             dto.setRelType(first.getRelType());

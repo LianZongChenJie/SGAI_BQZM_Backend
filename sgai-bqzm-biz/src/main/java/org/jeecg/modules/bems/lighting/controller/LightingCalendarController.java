@@ -17,10 +17,12 @@ import org.jeecg.modules.bems.lighting.entity.LightingArea;
 import org.jeecg.modules.bems.lighting.entity.LightingCircuit;
 import org.jeecg.modules.bems.lighting.entity.LightingOperationLog;
 import org.jeecg.modules.bems.lighting.entity.LightingPlan;
+import org.jeecg.modules.bems.lighting.entity.LightingPlanExecuteLog;
 import org.jeecg.modules.bems.lighting.entity.LightingPlanExecutionTime;
 import org.jeecg.modules.bems.lighting.service.ILightingAreaService;
 import org.jeecg.modules.bems.lighting.service.ILightingCircuitService;
 import org.jeecg.modules.bems.lighting.service.ILightingOperationLogService;
+import org.jeecg.modules.bems.lighting.service.ILightingPlanExecuteLogService;
 import org.jeecg.modules.bems.lighting.service.ILightingPlanExecutionTimeService;
 import org.jeecg.modules.bems.lighting.service.ILightingPlanService;
 import org.springframework.web.bind.annotation.*;
@@ -42,8 +44,12 @@ import java.util.stream.Collectors;
  *
  * 事件状态（status）判定：
  * - 未来日期（执行时间未到）→ 待执行
- * - 执行时间已过但当天无计划/定时器执行日志 → 待执行（未执行）
- * - 执行时间已过且当天有计划/定时器执行日志 → 已执行
+ * - 执行时间已过，按 MQ 执行日志（lighting_plan_execute_log）判定：
+ *   - 日志=执行成功 → 执行成功（MQ 消息已被消费）
+ *   - 日志=执行失败 / 待消费（已发送但未被消费）→ 执行失败
+ * - 无执行日志（历史数据）时，按当天操作日志兜底：
+ *   - 当天有计划/定时器执行日志 → 执行成功
+ *   - 否则 → 待执行（未执行）
  *
  * 注：执行日志不作为独立事件展示在日历上，通过详情接口 /detail 按日期查询。
  */
@@ -56,27 +62,33 @@ public class LightingCalendarController {
 
     /** 事件状态：待执行 */
     private static final String STATUS_PENDING = "待执行";
-    /** 事件状态：已执行 */
-    private static final String STATUS_EXECUTED = "已执行";
+    /** 事件状态：执行成功（MQ 消息已被消费） */
+    private static final String STATUS_SUCCESS = "执行成功";
+    /** 事件状态：执行失败（MQ 消息未被消费/消费异常/执行失败） */
+    private static final String STATUS_FAIL = "执行失败";
 
     /** 定时器触发执行的日志操作人 */
     private static final String OPERATOR_TIMER = "定时器";
     /** 照明计划触发执行的日志操作人（默认值） */
     private static final String OPERATOR_PLAN = "照明计划";
 
+    private static final DateTimeFormatter DATE_FMT = DateTimeFormatter.ofPattern("yyyy-MM-dd");
+    private static final DateTimeFormatter TIME_FMT = DateTimeFormatter.ofPattern("HH:mm:ss");
+
     private final ILightingPlanService planService;
     private final ILightingPlanExecutionTimeService executionTimeService;
     private final ILightingOperationLogService lightingOperationLogService;
+    private final ILightingPlanExecuteLogService lightingPlanExecuteLogService;
     private final ILightingAreaService lightingAreaService;
     private final ILightingCircuitService lightingCircuitService;
 
     /**
-     * 查询指定年月的日历事件（照明计划的执行情况，含待执行/已执行状态）
+     * 查询指定年月的日历事件（照明计划的执行情况，含待执行/执行成功/执行失败状态）
      * 数据源与 /bems/lighting/plan/listPage 一致：仅查 lighting_plan 启用状态的计划
      * @param year 年份
      * @param month 月份 1-12
      */
-    @ApiOperation("查询指定年月的日历事件（照明计划的执行情况，含待执行/已执行状态）")
+    @ApiOperation("查询指定年月的日历事件（照明计划的执行情况，含待执行/执行成功/执行失败状态）")
     @GetMapping("/events")
     public Result<List<CalendarDayEvent>> events(@RequestParam int year, @RequestParam int month) {
         YearMonth yearMonth = YearMonth.of(year, month);
@@ -87,18 +99,20 @@ public class LightingCalendarController {
 
         Map<String, List<CalendarEvent>> dayEventMap = new HashMap<>();
 
-        // 1. 查询当月控制日志，构建“已执行”映射（供计划判断状态），不作为独立事件展示
+        // 1. 查询当月控制日志，构建“已执行”映射（供计划判断状态兜底），不作为独立事件展示
         List<LightingOperationLog> logs = loadMonthLogs(monthStartTime, monthEndTime);
         Map<String, Set<Long>> executedRelIdsByDate = buildExecutedRelIdsByDate(logs);
 
-        // 2. 照明计划事件（与 plan/listPage 同源，仅启用状态）
-        loadPlanEvents(monthStart, monthEnd, dayEventMap, executedRelIdsByDate);
+        // 2. 查询当月 MQ 执行日志（日期 → 计划ID → 状态），用于 执行成功/执行失败 判定
+        Map<String, Map<Long, String>> executeLogStatusByDate = loadMonthExecuteLogs(monthStart, monthEnd);
+
+        // 3. 照明计划事件（与 plan/listPage 同源，仅启用状态）
+        loadPlanEvents(monthStart, monthEnd, dayEventMap, executedRelIdsByDate, executeLogStatusByDate);
 
         // 组装返回结果
         List<CalendarDayEvent> result = new ArrayList<>();
-        DateTimeFormatter df = DateTimeFormatter.ofPattern("yyyy-MM-dd");
         for (LocalDate date = monthStart; !date.isAfter(monthEnd); date = date.plusDays(1)) {
-            String dateKey = date.format(df);
+            String dateKey = date.format(DATE_FMT);
             CalendarDayEvent dayEvent = new CalendarDayEvent();
             dayEvent.setDate(dateKey);
             dayEvent.setDayOfWeek(String.valueOf(date.getDayOfWeek().getValue()));
@@ -132,7 +146,7 @@ public class LightingCalendarController {
             // 历史日志事件：planId 即日志的 relId，直接查询当天该目标的日志
             List<LightingOperationLog> logs = queryLogsByDateAndRelIds(date, Collections.singleton(planId));
             detail.setLogs(logs);
-            detail.setStatus(logs.isEmpty() ? STATUS_PENDING : STATUS_EXECUTED);
+            detail.setStatus(logs.isEmpty() ? STATUS_PENDING : STATUS_SUCCESS);
             if (!logs.isEmpty()) {
                 LightingOperationLog first = logs.get(0);
                 detail.setPlanName(first.getName());
@@ -152,14 +166,18 @@ public class LightingCalendarController {
             detail.setOperationType(plan.getOperationType());
             // 执行时间取执行配置表，与日历列表口径一致
             LightingPlanExecutionTime et = executionTimeService.getByPlanId(planId);
-            detail.setExecutionTime(et != null ? et.getExecutionTime() : plan.getExecutionTime());
+            String execTimeStr = et != null ? et.getExecutionTime() : plan.getExecutionTime();
+            detail.setExecutionTime(execTimeStr);
 
             Set<Long> relIds = parseRelIds(plan.getRelIds());
 
             // 查询当天执行日志
             List<LightingOperationLog> logs = queryLogsByDateAndRelIds(date, relIds);
             detail.setLogs(logs);
-            detail.setStatus(logs.isEmpty() ? STATUS_PENDING : STATUS_EXECUTED);
+
+            // 状态：未来时间 → 待执行；优先按 MQ 执行日志判定 执行成功/执行失败，无记录时按操作日志兜底
+            String executeStatus = lookupExecuteLogStatus(date, planId);
+            detail.setStatus(resolveDetailStatus(date, execTimeStr, executeStatus, logs));
 
             // 无执行日志时，返回要执行的区域/回路
             if (logs.isEmpty() && !relIds.isEmpty()) {
@@ -180,7 +198,7 @@ public class LightingCalendarController {
         }
         LocalDate day;
         try {
-            day = LocalDate.parse(date, DateTimeFormatter.ofPattern("yyyy-MM-dd"));
+            day = LocalDate.parse(date, DATE_FMT);
         } catch (Exception e) {
             throw new JeecgBootException("date 格式必须为 yyyy-MM-dd");
         }
@@ -233,7 +251,8 @@ public class LightingCalendarController {
 
     private void loadPlanEvents(LocalDate monthStart, LocalDate monthEnd,
                                  Map<String, List<CalendarEvent>> dayEventMap,
-                                 Map<String, Set<Long>> executedRelIdsByDate) {
+                                 Map<String, Set<Long>> executedRelIdsByDate,
+                                 Map<String, Map<Long, String>> executeLogStatusByDate) {
         List<LightingPlan> enabledPlans = planService.list(
                 new LambdaQueryWrapper<LightingPlan>()
                         .eq(LightingPlan::getStatus, LightingPlan.STATUS_ENABLE)
@@ -246,16 +265,14 @@ public class LightingCalendarController {
                 enabledPlans.stream().map(LightingPlan::getId).toList()
         ).stream().collect(Collectors.toMap(LightingPlanExecutionTime::getPlanId, et -> et, (a, b) -> a));
 
-        DateTimeFormatter dateFormatter = DateTimeFormatter.ofPattern("yyyy-MM-dd");
-
         for (LightingPlan plan : enabledPlans) {
             LightingPlanExecutionTime et = executionTimeMap.get(plan.getId());
             if (et == null) continue;
 
             LocalDate startDate, endDate;
             try {
-                startDate = LocalDate.parse(et.getStartDate(), dateFormatter);
-                endDate = LocalDate.parse(et.getEndDate(), dateFormatter);
+                startDate = LocalDate.parse(et.getStartDate(), DATE_FMT);
+                endDate = LocalDate.parse(et.getEndDate(), DATE_FMT);
             } catch (Exception e) {
                 log.warn("解析计划时间配置失败, planId={}", plan.getId());
                 continue;
@@ -273,7 +290,7 @@ public class LightingCalendarController {
             String color = plan.getPlanType() != null && plan.getPlanType().contains("节日") ? "green" : "blue";
             LocalTime execTime = null;
             try {
-                execTime = LocalTime.parse(timeStr, DateTimeFormatter.ofPattern("HH:mm:ss"));
+                execTime = LocalTime.parse(timeStr, TIME_FMT);
             } catch (Exception e) {
                 // 执行时间格式异常时不判断状态时间，仅按日期判断
             }
@@ -284,7 +301,8 @@ public class LightingCalendarController {
                 if (!current.isBefore(startDate) && !current.isAfter(endDate)) {
                     String dayOfWeek = String.valueOf(current.getDayOfWeek().getValue());
                     if (enabledWeekDays.isEmpty() || enabledWeekDays.contains(dayOfWeek)) {
-                        String dateKey = current.format(dateFormatter);
+                        String dateKey = current.format(DATE_FMT);
+                        String executeLogStatus = lookupExecuteLogStatus(executeLogStatusByDate, dateKey, plan.getId());
                         CalendarEvent event = new CalendarEvent();
                         event.setSource("PLAN");
                         event.setPlanId(plan.getId());
@@ -293,7 +311,7 @@ public class LightingCalendarController {
                         event.setColor(color);
                         event.setPlanType(plan.getPlanType());
                         event.setOperationType(plan.getOperationType());
-                        event.setStatus(resolveStatus(current, execTime, executedRelIdsByDate, planRelIds));
+                        event.setStatus(resolveStatus(current, execTime, executedRelIdsByDate, planRelIds, executeLogStatus));
 
                         dayEventMap.computeIfAbsent(dateKey, k -> new ArrayList<>()).add(event);
                     }
@@ -303,10 +321,89 @@ public class LightingCalendarController {
         }
     }
 
-    // ==================== 控制日志（仅用于状态判定，不作为日历事件） ====================
+    // ==================== MQ 执行日志（执行成功/执行失败判定） ====================
 
     /**
-     * 查询指定月份的当月控制日志，供 buildExecutedRelIdsByDate 判断“已执行”状态。
+     * 查询指定月份的 MQ 执行日志（lighting_plan_execute_log）
+     * 返回 日期(yyyy-MM-dd) → (计划ID → 状态) 映射，用于判定 执行成功/执行失败
+     */
+    private Map<String, Map<Long, String>> loadMonthExecuteLogs(LocalDate monthStart, LocalDate monthEnd) {
+        Map<String, Map<Long, String>> map = new HashMap<>();
+        List<LightingPlanExecuteLog> list = lightingPlanExecuteLogService.list(
+                new LambdaQueryWrapper<LightingPlanExecuteLog>()
+                        .ge(LightingPlanExecuteLog::getExecuteDate, monthStart.format(DATE_FMT))
+                        .le(LightingPlanExecuteLog::getExecuteDate, monthEnd.format(DATE_FMT))
+                        .orderByDesc(LightingPlanExecuteLog::getId));
+        if (list == null || list.isEmpty()) return map;
+        for (LightingPlanExecuteLog logEntry : list) {
+            if (logEntry.getExecuteDate() == null || logEntry.getPlanId() == null) {
+                continue;
+            }
+            // 同一天同一计划可能有多条记录，保留最新一条（list 已按 id 倒序，首个写入后不再覆盖）
+            map.computeIfAbsent(logEntry.getExecuteDate(), k -> new HashMap<>())
+                    .putIfAbsent(logEntry.getPlanId(), logEntry.getStatus());
+        }
+        return map;
+    }
+
+    /**
+     * 从月度执行日志映射中查询指定日期+计划的执行状态
+     */
+    private String lookupExecuteLogStatus(Map<String, Map<Long, String>> executeLogStatusByDate, String dateKey, Long planId) {
+        if (executeLogStatusByDate == null || planId == null) return null;
+        Map<Long, String> dayMap = executeLogStatusByDate.get(dateKey);
+        return dayMap == null ? null : dayMap.get(planId);
+    }
+
+    /**
+     * 按执行日期查询指定计划的 MQ 执行状态（详情接口用）
+     */
+    private String lookupExecuteLogStatus(String date, Long planId) {
+        if (date == null || planId == null) return null;
+        LightingPlanExecuteLog latest = lightingPlanExecuteLogService.getOne(
+                new LambdaQueryWrapper<LightingPlanExecuteLog>()
+                        .eq(LightingPlanExecuteLog::getExecuteDate, date)
+                        .eq(LightingPlanExecuteLog::getPlanId, planId)
+                        .orderByDesc(LightingPlanExecuteLog::getId)
+                        .last("LIMIT 1"), false);
+        return latest == null ? null : latest.getStatus();
+    }
+
+    /**
+     * 详情接口状态判定：
+     * - 未来（执行时间未到）→ 待执行
+     * - 执行时间已过：优先 MQ 执行日志（成功→执行成功，失败/待消费→执行失败）
+     * - 无执行日志时按操作日志兜底（有日志→执行成功，无→待执行）
+     */
+    private String resolveDetailStatus(String date, String executionTime, String executeLogStatus, List<LightingOperationLog> logs) {
+        // 未来时间 → 待执行
+        try {
+            LocalDate day = LocalDate.parse(date, DATE_FMT);
+            if (StringUtils.isNotEmpty(executionTime)) {
+                LocalDateTime eventDateTime = day.atTime(LocalTime.parse(executionTime, TIME_FMT));
+                if (eventDateTime.isAfter(LocalDateTime.now())) {
+                    return STATUS_PENDING;
+                }
+            } else if (day.isAfter(LocalDate.now())) {
+                return STATUS_PENDING;
+            }
+        } catch (Exception ignored) {
+            // 日期/时间格式异常时不判断未来，继续走日志判定
+        }
+        if (StringUtils.isNotEmpty(executeLogStatus)) {
+            if (LightingPlanExecuteLog.STATUS_SUCCESS.equals(executeLogStatus)) {
+                return STATUS_SUCCESS;
+            }
+            // 执行失败 / 待消费（已发送未消费）→ 执行失败
+            return STATUS_FAIL;
+        }
+        return (logs != null && !logs.isEmpty()) ? STATUS_SUCCESS : STATUS_PENDING;
+    }
+
+    // ==================== 控制日志（仅用于状态兜底判定，不作为日历事件） ====================
+
+    /**
+     * 查询指定月份的当月控制日志，供 buildExecutedRelIdsByDate 判断“已执行”状态（兜底）。
      * 执行日志不作为独立事件展示在日历上，详情请调用 /detail 接口。
      */
     private List<LightingOperationLog> loadMonthLogs(LocalDateTime monthStart, LocalDateTime monthEnd) {
@@ -319,14 +416,13 @@ public class LightingCalendarController {
     }
 
     /**
-     * 构建 “日期 → 当天已执行的目标ID集合” 映射（用于判断计划/定时任务是否已执行）。
+     * 构建 “日期 → 当天已执行的目标ID集合” 映射（用于判断计划/定时任务是否已执行，兜底）。
      * 仅统计计划/定时器触发的操作日志（操作人=定时器/照明计划），排除手动操作，
      * 避免“用户手动开灯”将同一天的定时计划误判为已执行。
      */
     private Map<String, Set<Long>> buildExecutedRelIdsByDate(List<LightingOperationLog> logs) {
         Map<String, Set<Long>> map = new HashMap<>();
         if (logs == null || logs.isEmpty()) return map;
-        DateTimeFormatter df = DateTimeFormatter.ofPattern("yyyy-MM-dd");
         for (LightingOperationLog logEntry : logs) {
             if (logEntry.getOperationTime() == null || logEntry.getRelId() == null) {
                 continue;
@@ -335,7 +431,7 @@ public class LightingCalendarController {
             if (!OPERATOR_TIMER.equals(operator) && !OPERATOR_PLAN.equals(operator)) {
                 continue;
             }
-            String dateKey = logEntry.getOperationTime().toLocalDate().format(df);
+            String dateKey = logEntry.getOperationTime().toLocalDate().format(DATE_FMT);
             map.computeIfAbsent(dateKey, k -> new HashSet<>()).add(logEntry.getRelId());
         }
         return map;
@@ -362,11 +458,15 @@ public class LightingCalendarController {
     /**
      * 判定事件状态：
      * - 执行时间在将来 → 待执行
-     * - 执行时间已到/已过，且当天有计划/定时器执行日志 → 已执行
-     * - 否则（当天无计划执行日志）→ 待执行（未执行）
+     * - 执行时间已到/已过，且有 MQ 执行日志：
+     *   - 执行成功 → 执行成功
+     *   - 执行失败 / 待消费（已发送未消费）→ 执行失败
+     * - 无 MQ 执行日志（历史数据），按当天计划执行日志兜底：
+     *   - 已执行 → 执行成功；否则 → 待执行（未执行）
      */
     private String resolveStatus(LocalDate date, LocalTime execTime,
-                                 Map<String, Set<Long>> executedRelIdsByDate, Set<Long> relIds) {
+                                 Map<String, Set<Long>> executedRelIdsByDate, Set<Long> relIds,
+                                 String executeLogStatus) {
         LocalDateTime now = LocalDateTime.now();
         if (execTime != null) {
             LocalDateTime eventDateTime = date.atTime(execTime);
@@ -376,9 +476,17 @@ public class LightingCalendarController {
         } else if (date.isAfter(now.toLocalDate())) {
             return STATUS_PENDING;
         }
-        // 执行时间已到/已过：通过当天计划执行日志判断是否真正执行
+        // 执行时间已到/已过：优先按 MQ 执行日志判定
+        if (StringUtils.isNotEmpty(executeLogStatus)) {
+            if (LightingPlanExecuteLog.STATUS_SUCCESS.equals(executeLogStatus)) {
+                return STATUS_SUCCESS;
+            }
+            // 执行失败 / 待消费（已发送但未被消费）→ 执行失败
+            return STATUS_FAIL;
+        }
+        // 无执行日志（历史数据）：通过当天计划执行日志判断是否真正执行
         if (isExecutedOn(executedRelIdsByDate, date, relIds)) {
-            return STATUS_EXECUTED;
+            return STATUS_SUCCESS;
         }
         return STATUS_PENDING;
     }
@@ -388,8 +496,7 @@ public class LightingCalendarController {
      */
     private boolean isExecutedOn(Map<String, Set<Long>> executedRelIdsByDate, LocalDate date, Set<Long> relIds) {
         if (relIds == null || relIds.isEmpty()) return false;
-        Set<Long> executedIds = executedRelIdsByDate.get(
-                date.format(DateTimeFormatter.ofPattern("yyyy-MM-dd")));
+        Set<Long> executedIds = executedRelIdsByDate.get(date.format(DATE_FMT));
         if (executedIds == null || executedIds.isEmpty()) return false;
         for (Long id : relIds) {
             if (executedIds.contains(id)) return true;
@@ -429,7 +536,7 @@ public class LightingCalendarController {
         private String planType;
         @ApiModelProperty("操作类型：开灯/关灯/执行")
         private String operationType;
-        @ApiModelProperty("状态：待执行/已执行")
+        @ApiModelProperty("状态：待执行/执行成功/执行失败")
         private String status;
     }
 
@@ -451,7 +558,7 @@ public class LightingCalendarController {
         private String operationType;
         @ApiModelProperty("计划执行时间 HH:mm:ss")
         private String executionTime;
-        @ApiModelProperty("状态：待执行/已执行")
+        @ApiModelProperty("状态：待执行/执行成功/执行失败")
         private String status;
         @ApiModelProperty("执行日志列表（当天有执行记录时返回）")
         private List<LightingOperationLog> logs;

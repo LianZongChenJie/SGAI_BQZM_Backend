@@ -60,11 +60,20 @@
 	</appender>
 	<!-- 每天生成一个html格式的日志结束 -->
 
-	<!--myibatis log configure -->
-	<logger name="com.apache.ibatis" level="TRACE" />
+	<!--myibatis log configure：已注释，SQL 与查询结果日志改由 application.yml 中 mybatis-plus.configuration.log-impl=NoLoggingImpl 统一关闭。
+	    如需临时排查 SQL，可去掉下方注释或把 level 改为 DEBUG -->
+	<!--<logger name="com.apache.ibatis" level="TRACE" />
 	<logger name="java.sql.Connection" level="DEBUG" />
 	<logger name="java.sql.Statement" level="DEBUG" />
-	<logger name="java.sql.PreparedStatement" level="DEBUG" />
+	<logger name="java.sql.PreparedStatement" level="DEBUG" />-->
+
+	<!-- 强制关闭 MyBatis / MyBatis-Plus 的 SQL 与查询结果日志，
+	     覆盖 Nacos 远程配置可能设置的 StdOutImpl，作为兜底防护。
+	     如需临时排查 SQL，把下方 OFF 改为 DEBUG 即可 -->
+	<logger name="org.apache.ibatis" level="OFF"/>
+	<logger name="org.apache.ibatis.logging.stdout.StdOutImpl" level="OFF"/>
+	<logger name="com.baomidou.mybatisplus" level="OFF"/>
+	<logger name="com.baomidou.mybatisplus.core.toolkit.SqlHelper" level="OFF"/>
 
 	<!-- 日志输出级别 -->
 	<root level="INFO">

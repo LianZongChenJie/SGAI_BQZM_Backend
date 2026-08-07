@@ -6,6 +6,7 @@ import com.baomidou.mybatisplus.core.metadata.IPage;
 import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
 import com.baomidou.mybatisplus.extension.service.impl.ServiceImpl;
 import lombok.AllArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
 import org.apache.commons.lang3.StringUtils;
 import org.jeecg.common.exception.JeecgBootException;
 import org.jeecg.modules.bems.lighting.dto.LightingPlanDetailDto;
@@ -14,6 +15,7 @@ import org.jeecg.modules.bems.lighting.entity.LightingArea;
 import org.jeecg.modules.bems.lighting.entity.LightingCircuit;
 import org.jeecg.modules.bems.lighting.entity.LightingOperationLog;
 import org.jeecg.modules.bems.lighting.entity.LightingPlan;
+import org.jeecg.modules.bems.lighting.entity.LightingPlanExecuteLog;
 import org.jeecg.modules.bems.lighting.entity.LightingPlanExecutionTime;
 import org.jeecg.modules.bems.lighting.mapper.LightingPlanMapper;
 import org.jeecg.modules.bems.lighting.mq.send.LightingSendService;
@@ -28,6 +30,7 @@ import java.util.*;
 import java.util.function.Function;
 import java.util.stream.Collectors;
 
+@Slf4j
 @Service
 @AllArgsConstructor
 public class LightingPlanServiceImpl extends ServiceImpl<LightingPlanMapper, LightingPlan> implements ILightingPlanService {
@@ -44,6 +47,8 @@ public class LightingPlanServiceImpl extends ServiceImpl<LightingPlanMapper, Lig
     private final ILightingSceneService lightingSceneService;
 
     private final ILightingOperationLogService lightingOperationLogService;
+
+    private final ILightingPlanExecuteLogService lightingPlanExecuteLogService;
 
 
     @Override
@@ -114,36 +119,42 @@ public class LightingPlanServiceImpl extends ServiceImpl<LightingPlanMapper, Lig
         }
         // 同步删除执行时间配置，避免孤儿数据
         executionTimeService.remove(new LambdaQueryWrapper<LightingPlanExecutionTime>().eq(LightingPlanExecutionTime::getPlanId, id));
+        // 同步删除执行日志，避免孤儿数据
+        lightingPlanExecuteLogService.remove(new LambdaQueryWrapper<LightingPlanExecuteLog>().eq(LightingPlanExecuteLog::getPlanId, id));
         super.removeById(id);
     }
 
     /**
-     * 照明计划执行
+     * 照明计划执行（MQ 消息消费端调用）
      * @param id 计划id
      * @param version 版本号
+     * @return 是否执行成功（false 表示计划停用/版本不匹配/时间偏差超限等未实际执行）
      */
     @Override
-    public void execution(Long id,String version) {
+    public boolean execution(Long id,String version) {
         // 获取计划信息
         LightingPlan plan = super.getById(id);
         if(plan == null || !LightingPlan.STATUS_ENABLE.equals(plan.getStatus())){
-            return;
+            log.warn("计划不存在或未启用，执行失败。计划id：{}", id);
+            return false;
         }
         // 定时任务同步的计划：由动态调度器执行，跳过老引擎MQ执行
         if(plan.getScheduleJobId() != null){
-            return;
+            log.warn("计划由动态调度器执行，跳过老引擎MQ执行。计划id：{}", id);
+            return false;
         }
 
         LightingPlanExecutionTime executionTime = executionTimeService.getByPlanIdAndVersion(id,version);
         if(executionTime == null){
-            return;
+            log.warn("执行时间配置不存在或版本不匹配，执行失败。计划id：{}，version：{}", id, version);
+            return false;
         }
 
         LocalTime time = LocalTime.now();
         long between = Math.abs(ChronoUnit.SECONDS.between(time, executionTime.getExecutionLocalTime()));
         if(between > 300){
             log.error("当前时间与计划执行时间相差>300秒，执行失败。计划id：" + id);
-            return;
+            return false;
         }
 
         // 记录定时任务操作日志（父日志）
@@ -166,7 +177,7 @@ public class LightingPlanServiceImpl extends ServiceImpl<LightingPlanMapper, Lig
             // 回路
             executeCircuit(relIds, plan.getOperationType(), planLog.getId());
         }
-
+        return true;
     }
 
     @Override
@@ -197,7 +208,7 @@ public class LightingPlanServiceImpl extends ServiceImpl<LightingPlanMapper, Lig
         if(data.getStartLocalDate().isAfter(now) || data.getEndLocalDate().isBefore(now)){
             return;
         }
-        lightingSendService.sendPlan(plan.getId(),data.getVersion(),now.atTime(data.getExecutionLocalTime()));
+        lightingSendService.sendPlan(plan.getId(),plan.getPlanName(),data.getVersion(),now.atTime(data.getExecutionLocalTime()));
     }
 
     @Override

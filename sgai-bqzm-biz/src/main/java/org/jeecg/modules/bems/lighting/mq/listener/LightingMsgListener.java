@@ -15,6 +15,7 @@ import org.jeecg.modules.bems.lighting.mq.message.PowerBoxData;
 import org.jeecg.modules.bems.lighting.mq.send.LightingSendService;
 import org.jeecg.modules.bems.lighting.service.ILightingAreaService;
 import org.jeecg.modules.bems.lighting.service.ILightingCircuitService;
+import org.jeecg.modules.bems.lighting.service.ILightingPlanExecuteLogService;
 import org.jeecg.modules.bems.lighting.service.ILightingPlanService;
 import org.springframework.amqp.core.Message;
 import org.springframework.amqp.rabbit.annotation.RabbitListener;
@@ -33,6 +34,8 @@ public class LightingMsgListener {
     private final ILightingPlanService planService;
 
     private final LightingSendService sendService;
+
+    private final ILightingPlanExecuteLogService planExecuteLogService;
 
     private final RedisUtil redisUtil;
 
@@ -93,13 +96,21 @@ public class LightingMsgListener {
     @RabbitListener(queues = LightingMqConstant.QUEUE_LIGHTING_PLAN, ackMode = "AUTO")
     public void planListener(Message message){
         String body = new String(message.getBody());
+        Long planId = null;
+        String version = null;
+        String executeDate = null;
         try{
             JSONObject jsonObject = JSONObject.parseObject(body);
-            Long planId = jsonObject.getLong("planId");
-            String version = jsonObject.getString("version");
-            planService.execution(planId,version);
+            planId = jsonObject.getLong("planId");
+            version = jsonObject.getString("version");
+            executeDate = jsonObject.getString("executeDate");
+            boolean success = planService.execution(planId,version);
+            planExecuteLogService.markConsumed(planId, version, executeDate, success,
+                    success ? null : "计划执行失败（计划停用/版本不匹配/时间偏差超限等）");
         }catch (Exception e){
             log.error("mq消息消费失败。queue:{}，message:{}", LightingMqConstant.QUEUE_LIGHTING_PLAN, body, e);
+            // 消费异常：记录执行失败，供日历展示
+            planExecuteLogService.markConsumed(planId, version, executeDate, false, "MQ消息消费异常: " + e.getMessage());
         }
     }
 
@@ -262,6 +273,82 @@ public class LightingMsgListener {
             }
         } catch (Exception e) {
             log.error("【1号馆】状态消息处理异常", e);
+        }
+    }
+
+    /**
+     * 北区（space=903）状态消息监听
+     * 接收MQ转发小程序从181服务器转过来的状态消息，更新回路状态
+     */
+    @RabbitListener(queues = LightingMqConstant.QUEUE_LIGHTING_LISTENER_BQ, ackMode = "AUTO")
+    public void bqStatusListener(Message message){
+        String body = new String(message.getBody());
+        try {
+            log.info("【北区】收到状态消息：{}", body);
+            JSONObject msg = JSONObject.parseObject(body);
+
+            String gatewayCode = msg.getString("GatewayCode");
+            String circuitCode = msg.getString("CircuitCode");
+            String value = msg.getString("Value");
+
+            if(StringUtils.isEmpty(gatewayCode) || StringUtils.isEmpty(circuitCode) || StringUtils.isEmpty(value)){
+                log.warn("【北区】状态消息参数不完整，跳过");
+                return;
+            }
+
+            // 拼成 circuit_code：GatewayCode + "-" + CircuitCode
+            String fullCircuitCode = gatewayCode + "-" + circuitCode;
+
+            // 根据 circuit_code 查询回路
+            LambdaQueryWrapper<LightingCircuit> wrapper = new LambdaQueryWrapper<>();
+            wrapper.eq(LightingCircuit::getCircuitCode, fullCircuitCode);
+            LightingCircuit circuit = circuitService.getOne(wrapper);
+
+            if(circuit == null){
+                log.warn("【北区】未找到对应的回路，circuit_code={}", fullCircuitCode);
+                return;
+            }
+
+            // 判断状态，和老逻辑一致：0=关，0-100之间=开（统一设为100）
+            boolean isValidNumber = false;
+            String status = "";
+            try {
+                int numValue = Integer.parseInt(value);
+                isValidNumber = numValue >= 0 && numValue <= 100;
+                if(numValue == 0){
+                    status = LightingCircuit.STATUS_OFF;
+                }else if(numValue > 0 && numValue <= 100){
+                    status = LightingCircuit.STATUS_ON;
+                }
+            } catch (NumberFormatException e) {
+                isValidNumber = false;
+            }
+
+            if(isValidNumber){
+                // 更新回路状态
+                circuit.setStatus(status);
+                circuitService.updateById(circuit);
+
+                // 通过 area_id 查区域，拿到 space
+                LightingArea area = areaService.getById(circuit.getAreaId());
+                String space = area != null ? area.getSpace() : "";
+
+                // 更新通讯状态为在线
+                circuitService.updateComstat(space, String.valueOf(circuit.getAreaId()), circuit.getCircuitCode(), LightingCircuit.COMSTAT_ONLINE);
+
+                // 发送离线延迟消息
+                sendService.sendLightingCircuitComstat(space, String.valueOf(circuit.getAreaId()), circuit.getCircuitCode());
+
+                log.info("【北区】更新回路状态：circuit_code={}, status={}", fullCircuitCode, status);
+            }else{
+                // 状态异常，设置为离线
+                LightingArea area = areaService.getById(circuit.getAreaId());
+                String space = area != null ? area.getSpace() : "";
+                circuitService.updateComstat(space, String.valueOf(circuit.getAreaId()), circuit.getCircuitCode(), LightingCircuit.COMSTAT_OFFLINE);
+                log.warn("【北区】状态值异常，设置为离线：circuit_code={}, value={}", fullCircuitCode, value);
+            }
+        } catch (Exception e) {
+            log.error("【北区】状态消息处理异常", e);
         }
     }
 }

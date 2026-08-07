@@ -76,4 +76,19 @@ public class LightingMqConstant {
      */
     public static final String QUEUE_LIGHTING_LISTENER_1HG = "Lighting";
 
+    /**
+     * 北区（space=903）控制消息发送队列 - 11号网关
+     */
+    public static final String QUEUE_LIGHTING_SEND_BQ_11 = "lighting_control_bq_11";
+
+    /**
+     * 北区（space=903）控制消息发送队列 - 12号网关
+     */
+    public static final String QUEUE_LIGHTING_SEND_BQ_12 = "lighting_control_bq_12";
+
+    /**
+     * 北区（space=903）状态反馈队列
+     */
+    public static final String QUEUE_LIGHTING_LISTENER_BQ = "lighting_data_bq";
+
 }

@@ -1,8 +1,10 @@
 server:
-  port: 7010
+  port: 7011
 spring:
+  main:
+    allow-circular-references: true
   application:
-    name: sgai-bqzm
+    name: sgai-bqzm-start
   config:
     import:
       - optional:nacos:jeecg.yaml
@@ -23,6 +25,9 @@ spring:
         group: DEFAULT_GROUP
 
 mybatis-plus:
+  configuration:
+    # 关闭 SQL 与查询结果日志（即使 nacos 远程配置里设置了 StdOutImpl，本地配置优先级更高，也会被覆盖）
+    log-impl: org.apache.ibatis.logging.nologging.NoLoggingImpl
   global-config:
     db-config:
       id-type: auto

@@ -18,11 +18,12 @@ public interface ILightingPlanService extends IService<LightingPlan> {
     void delete(Long id);
 
     /**
-     * 照明计划执行
+     * 照明计划执行（MQ 消息消费端调用）
      * @param id 计划id
      * @param version 版本号
+     * @return 是否执行成功（false 表示计划停用/版本不匹配/时间偏差超限等未实际执行）
      */
-    void execution(Long id,String version);
+    boolean execution(Long id,String version);
 
     void enable(LightingPlanExecutionTime data);
 

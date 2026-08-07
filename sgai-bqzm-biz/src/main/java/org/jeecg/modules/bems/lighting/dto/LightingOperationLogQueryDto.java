@@ -30,6 +30,12 @@ public class LightingOperationLogQueryDto {
     private String operationType;
 
     /**
+     * 名称（模糊匹配）
+     */
+    @ApiModelProperty(value = "名称（模糊匹配）")
+    private String name;
+
+    /**
      * 操作时间-起始
      */
     @ApiModelProperty(value = "操作时间-起始 yyyy-MM-dd HH:mm:ss")

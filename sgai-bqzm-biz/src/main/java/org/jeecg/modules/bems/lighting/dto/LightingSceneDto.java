@@ -72,6 +72,18 @@ public class LightingSceneDto {
     private Long sort;
 
     /**
+     * 标签ID（可选，用于场景分组/筛选）
+     */
+    @ApiModelProperty(value = "标签ID（可选，用于场景分组/筛选）")
+    private String tagId;
+
+    /**
+     * 标签名称（可选，用于场景分组/筛选展示）
+     */
+    @ApiModelProperty(value = "标签名称（可选，用于场景分组/筛选展示）")
+    private String tagName;
+
+    /**
      * 场景明细（格式2使用，与 relIds 二选一）
      */
     @ApiModelProperty(value = "场景明细列表（与 relType+relIds 二选一）")

@@ -99,4 +99,16 @@ public class LightingSceneDetailDto {
      */
     @ApiModelProperty(value = "关联回路列表")
     private List<LightingCircuit> circuitList;
+
+    /**
+     * 标签ID（冗余存储，用于场景分组/筛选展示）
+     */
+    @ApiModelProperty(value = "标签ID")
+    private String tagId;
+
+    /**
+     * 标签名称（冗余存储，用于场景分组/筛选展示）
+     */
+    @ApiModelProperty(value = "标签名称")
+    private String tagName;
 }

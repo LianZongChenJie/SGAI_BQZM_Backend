@@ -81,6 +81,18 @@ public class LightingScene extends BaseEntity {
     private String groupId;
 
     /**
+     * 标签ID（冗余存储，用于场景分组/筛选展示）
+     */
+    @ApiModelProperty(value = "标签ID")
+    private String tagId;
+
+    /**
+     * 标签名称（冗余存储，用于场景分组/筛选展示）
+     */
+    @ApiModelProperty(value = "标签名称")
+    private String tagName;
+
+    /**
      * 场景明细（非表字段）
      */
     @TableField(exist = false)

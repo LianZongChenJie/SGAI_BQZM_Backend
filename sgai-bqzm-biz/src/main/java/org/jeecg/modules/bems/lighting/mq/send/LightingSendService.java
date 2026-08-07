@@ -7,14 +7,17 @@ import lombok.AllArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.apache.commons.lang3.StringUtils;
 import org.jeecg.common.util.RedisUtil;
+import org.jeecg.modules.bems.lighting.entity.LightingPlanExecuteLog;
 import org.jeecg.modules.bems.lighting.mq.constant.LightingMqConstant;
 import org.jeecg.modules.bems.lighting.mq.message.LightInfoUpdateLoad;
+import org.jeecg.modules.bems.lighting.service.ILightingPlanExecuteLogService;
 import org.springframework.amqp.core.Message;
 import org.springframework.amqp.core.MessageProperties;
 import org.springframework.amqp.rabbit.core.RabbitTemplate;
 import org.springframework.stereotype.Service;
 
 import java.time.LocalDateTime;
+import java.time.format.DateTimeFormatter;
 import java.time.temporal.ChronoUnit;
 import java.util.HashMap;
 import java.util.Map;
@@ -28,6 +31,8 @@ public class LightingSendService {
 
     private final RedisUtil redisUtil;
     private final ProcessorMetrics processorMetrics;
+
+    private final ILightingPlanExecuteLogService planExecuteLogService;
 
     public void send(LightInfoUpdateLoad msg) {
         log.info("发送消息：{}", msg);
@@ -58,22 +63,32 @@ public class LightingSendService {
     /**
      * 发送照明计划执行消息
      * @param planId 计划id
+     * @param planName 计划名称
      * @param version 计划版本号
      * @param executionTime 执行时间
      */
-    public void sendPlan(Long planId,String version, LocalDateTime executionTime){
+    public void sendPlan(Long planId,String planName, String version, LocalDateTime executionTime){
         Map<String,Object> msg = new HashMap<>();
         msg.put("planId",planId);
         msg.put("version",version);
+        String executeDate = executionTime != null
+                ? executionTime.format(DateTimeFormatter.ofPattern("yyyy-MM-dd"))
+                : LocalDateTime.now().format(DateTimeFormatter.ofPattern("yyyy-MM-dd"));
+        msg.put("executeDate", executeDate);
         MessageProperties properties = new MessageProperties();
         properties.setContentType(MessageProperties.CONTENT_TYPE_JSON);
         long delayTime = getDelayTime(executionTime);
         if(delayTime < 0){
             log.error("计划执行时间已过，执行失败。计划id：{}",planId);
+            // 执行时间已过，消息不会按时消费，直接记为失败
+            planExecuteLogService.markConsumed(planId, version, executeDate, false, "计划执行时间已过，未发送延迟消息");
+            return;
         }
         properties.setHeader("x-delay",delayTime * 1000L);
         log.info("照明计划发送消息：{}", msg);
         rabbitTemplate.send(LightingMqConstant.EXCHANGE_LIGHTING_PLAN, LightingMqConstant.ROUTING_KEY_LIGHTING_PLAN, new Message(JSONObject.toJSONString(msg).getBytes(), properties));
+        // 记录执行日志（待消费状态），供日历展示 执行成功/执行失败
+        planExecuteLogService.recordSend(planId, planName, version, executionTime);
     }
 
     public void sendLightingCircuitComstat(String space,String areaCode,String circuitCode){
@@ -134,6 +149,49 @@ public class LightingSendService {
         properties.setContentType(MessageProperties.CONTENT_TYPE_JSON);
         log.info("【1号馆】发送控制消息：GatewayAdr={}, KnxAdr={}, value={}", gatewayAdr, knxAdr, value);
         rabbitTemplate.send("", LightingMqConstant.QUEUE_LIGHTING_SEND_1HG, new Message(JSONObject.toJSONString(msg).getBytes(), properties));
+    }
+
+    /**
+     * 发送北区（space=903）控制消息（通过MQ转发小程序发给181服务器）
+     * 根据 circuit_code 前缀自动判断发到哪个队列：
+     * 11-xxx → lighting_control_bq_11 队列，GatewayCode=11
+     * 12-xxx → lighting_control_bq_12 队列，GatewayCode=12
+     * @param circuitCode 回路编码（格式：11-20 或 12-20）
+     * @param value 值（100=开，0=关）
+     */
+    public void sendBqControl(String circuitCode, String value) {
+        // 拆分 circuit_code：第一个 "-" 前面是 GatewayCode，后面是 CircuitCode
+        int dashIndex = circuitCode.indexOf('-');
+        if (dashIndex <= 0 || dashIndex >= circuitCode.length() - 1) {
+            log.error("【北区】回路编码格式不对，无法发送：circuitCode={}", circuitCode);
+            return;
+        }
+        String gatewayCode = circuitCode.substring(0, dashIndex);
+        String code = circuitCode.substring(dashIndex + 1);
+
+        // 确定队列
+        String queueName;
+        if ("11".equals(gatewayCode)) {
+            queueName = LightingMqConstant.QUEUE_LIGHTING_SEND_BQ_11;
+        } else if ("12".equals(gatewayCode)) {
+            queueName = LightingMqConstant.QUEUE_LIGHTING_SEND_BQ_12;
+        } else {
+            log.error("【北区】未知的网关编号，无法发送：gatewayCode={}, circuitCode={}", gatewayCode, circuitCode);
+            return;
+        }
+
+        // 构造消息
+        Map<String, Object> msg = new HashMap<>();
+        msg.put("DataType", "0");
+        msg.put("CircuitCode", code);
+        msg.put("Value", value);
+        msg.put("GatewayCode", gatewayCode);
+
+        MessageProperties properties = new MessageProperties();
+        properties.setContentType(MessageProperties.CONTENT_TYPE_JSON);
+        log.info("【北区】发送控制消息：queue={}, gatewayCode={}, circuitCode={}, value={}", queueName, gatewayCode, code, value);
+        log.info("【北区】发送控制消息：{}", JSONObject.toJSONString(msg));
+        rabbitTemplate.send("", queueName, new Message(JSONObject.toJSONString(msg).getBytes(), properties));
     }
 
 }

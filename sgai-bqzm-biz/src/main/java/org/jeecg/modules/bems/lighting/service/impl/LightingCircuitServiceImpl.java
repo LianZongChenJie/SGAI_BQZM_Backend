@@ -176,6 +176,12 @@ public class LightingCircuitServiceImpl extends ServiceImpl<CircuitMapper, Light
             return;
         }
 
+        // 北区（space=903）走新的MQ转发通道
+        if("903".equals(area.getSpace())){
+            controlBq(data, area, type, parentId);
+            return;
+        }
+
         if(type){
             service.circuitOpen(area.getSpace(),area.getAreaCode(),data.getCircuitCode());
             lightingOperationLogService.saveLog(LightingOperationLog.LOG_TYPE_CIRCUIT, parentId, LightingOperationLog.REL_TYPE_CIRCUIT, id, area.getAreaName() + "-" + data.getCircuitName(), LocalDateTime.now(), "回路开启");
@@ -209,6 +215,29 @@ public class LightingCircuitServiceImpl extends ServiceImpl<CircuitMapper, Light
                 circuit.getCircuitName(), operName, gatewayAdr, knxAdr);
 
         sendService.send1hgControl(gatewayAdr, knxAdr, value);
+
+        lightingOperationLogService.saveLog(LightingOperationLog.LOG_TYPE_CIRCUIT, parentId,
+                LightingOperationLog.REL_TYPE_CIRCUIT, circuit.getId(),
+                area.getAreaName() + "-" + circuit.getCircuitName(),
+                LocalDateTime.now(), operName);
+    }
+
+    /**
+     * 北区（space=903）回路控制（走MQ转发小程序通道）
+     */
+    private void controlBq(LightingCircuit circuit, LightingArea area, boolean type, Long parentId){
+        String circuitCode = circuit.getCircuitCode();
+        if(circuitCode == null || circuitCode.isEmpty()){
+            throw new JeecgBootException("回路编码为空，无法控制");
+        }
+
+        String value = type ? "100" : "0";
+        String operName = type ? "回路开启" : "回路关闭";
+
+        log.info("【北区】回路控制：circuitName={}, 操作={}, circuitCode={}",
+                circuit.getCircuitName(), operName, circuitCode);
+
+        sendService.sendBqControl(circuitCode, value);
 
         lightingOperationLogService.saveLog(LightingOperationLog.LOG_TYPE_CIRCUIT, parentId,
                 LightingOperationLog.REL_TYPE_CIRCUIT, circuit.getId(),
