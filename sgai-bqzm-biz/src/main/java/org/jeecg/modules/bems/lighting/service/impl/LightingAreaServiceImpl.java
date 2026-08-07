@@ -241,6 +241,7 @@ public class LightingAreaServiceImpl extends ServiceImpl<LightingAreaMapper, Lig
         areaLog.setName(area.getAreaName());
         areaLog.setOperationTime(LocalDateTime.now());
         areaLog.setOperationType(operationType);
+        String operatorType = lightingOperationLogService.resolveOperatorType(parentId);
         // 设置操作人
         String operationBy = "照明计划";
         try {
@@ -252,6 +253,7 @@ public class LightingAreaServiceImpl extends ServiceImpl<LightingAreaMapper, Lig
             // 异步场景中SecurityManager不可用，使用默认用户
         }
         areaLog.setOperationBy(operationBy);
+        areaLog.setOperatorType(operatorType);
         lightingOperationLogService.save(areaLog);
 
         // 查询区域下所有回路，记录回路子日志
@@ -270,6 +272,7 @@ public class LightingAreaServiceImpl extends ServiceImpl<LightingAreaMapper, Lig
                 childLog.setOperationTime(LocalDateTime.now());
                 childLog.setOperationType(circuitOpType);
                 childLog.setOperationBy(operationBy);
+                childLog.setOperatorType(operatorType);
                 childLogs.add(childLog);
             }
             lightingOperationLogService.saveBatchLog(childLogs);

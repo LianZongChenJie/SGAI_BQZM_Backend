@@ -65,6 +65,7 @@ public class LightingSceneServiceImpl extends ServiceImpl<LightingSceneMapper, L
                         .like(StringUtils.isNotEmpty(name), LightingScene::getSceneName, name)
                         .eq(StringUtils.isNotEmpty(params.getSceneType()), LightingScene::getSceneType, params.getSceneType())
                         .eq(StringUtils.isNotEmpty(params.getStatus()), LightingScene::getStatus, params.getStatus())
+                        .eq(StringUtils.isNotEmpty(params.getGroupId()), LightingScene::getGroupId, params.getGroupId())
                         .eq(StringUtils.isNotEmpty(params.getTagId()), LightingScene::getTagId, params.getTagId())
                         .like(StringUtils.isNotEmpty(params.getTagName()), LightingScene::getTagName, params.getTagName())
                         .orderByAsc(LightingScene::getSort)
@@ -99,6 +100,7 @@ public class LightingSceneServiceImpl extends ServiceImpl<LightingSceneMapper, L
         plan.setStatus(scene.getStatus());
         plan.setSort(scene.getSort());
         plan.setRemark(scene.getRemark());
+        plan.setGroupId(scene.getGroupId());
         plan.setTagId(scene.getTagId());
         plan.setTagName(scene.getTagName());
         plan.setCreateBy(scene.getCreateBy());
@@ -132,6 +134,7 @@ public class LightingSceneServiceImpl extends ServiceImpl<LightingSceneMapper, L
         scene.setStatus(LightingScene.STATUS_ENABLE);
         scene.setSort(dto.getSort() == null ? getMaxSort() + 1 : dto.getSort());
         scene.setRemark(dto.getRemark());
+        scene.setGroupId(dto.getGroupId());
         scene.setTagId(dto.getTagId());
         scene.setTagName(dto.getTagName());
         super.save(scene);
@@ -156,6 +159,7 @@ public class LightingSceneServiceImpl extends ServiceImpl<LightingSceneMapper, L
         scene.setSceneType(StringUtils.isEmpty(dto.getSceneType()) ? old.getSceneType() : dto.getSceneType());
         scene.setSort(dto.getSort());
         scene.setRemark(dto.getRemark());
+        scene.setGroupId(dto.getGroupId());
         scene.setTagId(dto.getTagId());
         scene.setTagName(dto.getTagName());
         super.updateById(scene);
@@ -196,6 +200,7 @@ public class LightingSceneServiceImpl extends ServiceImpl<LightingSceneMapper, L
         dto.setId(scene.getId());
         dto.setPlanName(scene.getSceneName());
         dto.setStatus(scene.getStatus());
+        dto.setGroupId(scene.getGroupId());
         dto.setTagId(scene.getTagId());
         dto.setTagName(scene.getTagName());
         if (CollectionUtil.isNotEmpty(details)) {
@@ -275,6 +280,7 @@ public class LightingSceneServiceImpl extends ServiceImpl<LightingSceneMapper, L
             // 异步场景中SecurityManager不可用，使用默认用户
         }
         sceneLog.setOperationBy(operationBy);
+        sceneLog.setOperatorType(LightingOperationLog.OPERATOR_TYPE_SCENE);
         lightingOperationLogService.save(sceneLog);
 
         log.info("开始执行场景【{}】, 目标数：{}", scene.getSceneName(), details.size());

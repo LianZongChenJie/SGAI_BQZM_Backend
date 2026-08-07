@@ -104,12 +104,14 @@ public class LightingPlanController {
 
     /**
      * 批量控制灯光（全开/全关）
-     * 按计划列表信息中的类型（relType + relIds + operationType）控制目标灯
+     * 按计划列表信息中的类型（relType + relIds + operationType）控制目标灯，
+     * 控制成功后同步更新关联场景的 status（开启/关闭）。
+     * sceneId 可选：传了则只同步该场景，不传自动反查包含这些目标的场景。
      */
     @ApiOperation("批量控制灯光（全开/全关）")
     @PostMapping("/control")
     public Result<String> control(@RequestBody LightingPlanControlDto dto){
-        service.control(dto.getRelType(), dto.getRelIds(), dto.getOperationType());
+        service.control(dto.getRelType(), dto.getRelIds(), dto.getOperationType(), dto.getSceneId());
         return Result.ok();
     }
 }

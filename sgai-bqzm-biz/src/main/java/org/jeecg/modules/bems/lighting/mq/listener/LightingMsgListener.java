@@ -278,7 +278,11 @@ public class LightingMsgListener {
 
     /**
      * 北区（space=903）状态消息监听
-     * 接收MQ转发小程序从181服务器转过来的状态消息，更新回路状态
+     * 接收MQ转发小程序从181服务器转过来的状态消息，更新回路数据
+     * 消息按 DataType 分流：
+     * - DataType=0：value 是回路开关状态（0=关，0-100之间=开），更新回路状态
+     * - DataType=2：value 是电流信息（A），更新回路电流字段 electric_current
+     * - DataType 缺省：兼容老消息，按回路状态处理
      */
     @RabbitListener(queues = LightingMqConstant.QUEUE_LIGHTING_LISTENER_BQ, ackMode = "AUTO")
     public void bqStatusListener(Message message){
@@ -290,6 +294,7 @@ public class LightingMsgListener {
             String gatewayCode = msg.getString("GatewayCode");
             String circuitCode = msg.getString("CircuitCode");
             String value = msg.getString("Value");
+            String dataType = msg.getString("DataType");
 
             if(StringUtils.isEmpty(gatewayCode) || StringUtils.isEmpty(circuitCode) || StringUtils.isEmpty(value)){
                 log.warn("【北区】状态消息参数不完整，跳过");
@@ -309,11 +314,24 @@ public class LightingMsgListener {
                 return;
             }
 
-            // 判断状态，和老逻辑一致：0=关，0-100之间=开（统一设为100）
+            // DataType=1：value 是电流信息，只更新电流字段
+            if("1".equals(dataType)){
+                try {
+                    double current = Double.parseDouble(value.trim());
+                    circuit.setElectricCurrent(current);
+                    circuitService.updateById(circuit);
+                    log.info("【北区】更新回路电流：circuit_code={}, current={}A", fullCircuitCode, current);
+                } catch (NumberFormatException e) {
+                    log.warn("【北区】电流值异常，未更新：circuit_code={}, value={}", fullCircuitCode, value);
+                }
+                return;
+            }
+
+            // DataType=0 或缺省：value 是回路开关状态，和老逻辑一致：0=关，0-100之间=开（统一设为100）
             boolean isValidNumber = false;
             String status = "";
             try {
-                int numValue = Integer.parseInt(value);
+                int numValue = Integer.parseInt(value.trim());
                 isValidNumber = numValue >= 0 && numValue <= 100;
                 if(numValue == 0){
                     status = LightingCircuit.STATUS_OFF;

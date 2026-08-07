@@ -18,6 +18,7 @@ import org.jeecg.modules.bems.lighting.entity.LightingPlan;
 import org.jeecg.modules.bems.lighting.entity.LightingPlanExecuteLog;
 import org.jeecg.modules.bems.lighting.entity.LightingPlanExecutionTime;
 import org.jeecg.modules.bems.lighting.mapper.LightingPlanMapper;
+import org.jeecg.modules.bems.lighting.mapper.LightingSceneDetailMapper;
 import org.jeecg.modules.bems.lighting.mq.send.LightingSendService;
 import org.jeecg.modules.bems.lighting.service.*;
 import org.springframework.stereotype.Service;
@@ -49,6 +50,8 @@ public class LightingPlanServiceImpl extends ServiceImpl<LightingPlanMapper, Lig
     private final ILightingOperationLogService lightingOperationLogService;
 
     private final ILightingPlanExecuteLogService lightingPlanExecuteLogService;
+
+    private final LightingSceneDetailMapper lightingSceneDetailMapper;
 
 
     @Override
@@ -167,6 +170,7 @@ public class LightingPlanServiceImpl extends ServiceImpl<LightingPlanMapper, Lig
         planLog.setOperationTime(java.time.LocalDateTime.now());
         planLog.setOperationType("定时任务" + plan.getOperationType());
         planLog.setOperationBy("照明计划");
+        planLog.setOperatorType(LightingOperationLog.OPERATOR_TYPE_PLAN);
         lightingOperationLogService.save(planLog);
 
         Set<Long> relIds = Arrays.stream(plan.getRelIds().split(",")).map(Long::parseLong).collect(Collectors.toSet());
@@ -348,6 +352,7 @@ public class LightingPlanServiceImpl extends ServiceImpl<LightingPlanMapper, Lig
             // 异步场景中SecurityManager不可用，使用默认用户
         }
         planLog.setOperationBy(operationBy);
+        planLog.setOperatorType(LightingOperationLog.OPERATOR_TYPE_MANUAL);
         lightingOperationLogService.save(planLog);
 
         Set<Long> relIds = Arrays.stream(plan.getRelIds().split(",")).map(Long::parseLong).collect(Collectors.toSet());
@@ -380,7 +385,7 @@ public class LightingPlanServiceImpl extends ServiceImpl<LightingPlanMapper, Lig
 
 
     @Override
-    public void control(String relType, String relIds, String operationType) {
+    public void control(String relType, String relIds, String operationType, Long sceneId) {
         if(StringUtils.isEmpty(relIds)){
             throw new JeecgBootException("relIds 不能为空");
         }
@@ -408,10 +413,61 @@ public class LightingPlanServiceImpl extends ServiceImpl<LightingPlanMapper, Lig
         if(ids.isEmpty()){
             throw new JeecgBootException("relIds 不能为空");
         }
+        if(!LightingPlan.REL_TYPE_AREA.equals(relType) && !LightingPlan.REL_TYPE_CIRCUIT.equals(relType)){
+            throw new JeecgBootException("relType 必须为 区域 或 回路");
+        }
+        // relType=区域 时按场景查询列表（复用给日志场景名、泛光判断、状态同步，避免重复查询）
+        List<org.jeecg.modules.bems.lighting.entity.LightingScene> sceneList = null;
+        if(LightingPlan.REL_TYPE_AREA.equals(relType)){
+            sceneList = lightingSceneService.listByIds(ids);
+        }
+        // 解析场景名称（优先 sceneId：先在 sceneList 里匹配，未命中再单查；其次 relType=区域 时 relIds 即场景ID）
+        String sceneName = null;
+        if(sceneId != null){
+            org.jeecg.modules.bems.lighting.entity.LightingScene sc = null;
+            if(CollectionUtil.isNotEmpty(sceneList)){
+                for(org.jeecg.modules.bems.lighting.entity.LightingScene s : sceneList){
+                    if(sceneId.equals(s.getId())){
+                        sc = s;
+                        break;
+                    }
+                }
+            }
+            if(sc == null){
+                sc = lightingSceneService.getById(sceneId);
+            }
+            if(sc != null){
+                sceneName = sc.getSceneName();
+            }
+        }
+        if(sceneName == null && CollectionUtil.isNotEmpty(sceneList)){
+            sceneName = sceneList.get(0).getSceneName();
+        }
+        // 记录场景控制日志（父日志，操作类型=场景），子日志通过 parentId 自动继承
+        LightingOperationLog planLog = new LightingOperationLog();
+        planLog.setLogType(LightingOperationLog.LOG_TYPE_SCENE);
+        planLog.setParentId(null);
+        planLog.setRelType(relType);
+        planLog.setRelId(sceneId != null ? sceneId : ids.iterator().next());
+        planLog.setName(sceneName != null ? sceneName : "场景控制");
+        planLog.setOperationTime(java.time.LocalDateTime.now());
+        planLog.setOperationType("场景" + op);
+        String operationBy = "照明计划";
+        try {
+            org.jeecg.common.system.vo.LoginUser sysUser = (org.jeecg.common.system.vo.LoginUser) org.apache.shiro.SecurityUtils.getSubject().getPrincipal();
+            if (sysUser != null) {
+                operationBy = sysUser.getUsername();
+            }
+        } catch (Exception e) {
+            // 异步场景中SecurityManager不可用，使用默认用户
+        }
+        planLog.setOperationBy(operationBy);
+        planLog.setOperatorType(LightingOperationLog.OPERATOR_TYPE_SCENE);
+        lightingOperationLogService.save(planLog);
+
         if(LightingPlan.REL_TYPE_AREA.equals(relType)){
             // 区域（场景）批量全开/全关
-            // 先查询场景列表，判断是否有泛光节目ID
-            List<org.jeecg.modules.bems.lighting.entity.LightingScene> sceneList = lightingSceneService.listByIds(ids);
+            // 先查询场景列表，判断是否有泛光节目ID（上面已查询，sceneList 复用）
 
             // 操作类型转成泛光的 onOff：1开，2关
             int onOff = LightingPlan.OPERATION_TYPE_OPEN.equals(op) ? 1 : 2;
@@ -431,13 +487,62 @@ public class LightingPlanServiceImpl extends ServiceImpl<LightingPlanMapper, Lig
 
             // 走原来的逻辑
             if(!normalIds.isEmpty()){
-                executeArea(normalIds, op, null);
+                executeArea(normalIds, op, planLog.getId());
             }
         }else if(LightingPlan.REL_TYPE_CIRCUIT.equals(relType)){
             // 回路批量开启/关闭
-            executeCircuit(ids, op, null);
-        }else{
-            throw new JeecgBootException("relType 必须为 区域 或 回路");
+            executeCircuit(ids, op, planLog.getId());
+        }
+
+        // 控制成功后，同步更新关联场景明细的操作类型（scene/listPage 的 operationType 显示开启/关闭）
+        // relType=区域 时复用上面已查出的 sceneList，避免重复查询
+        syncSceneOperationType(relType, ids, op, sceneId,
+                LightingPlan.REL_TYPE_AREA.equals(relType) ? sceneList : null);
+    }
+
+    /**
+     * 控制成功后同步场景明细的操作类型：
+     * 1. 前端传了 sceneId：只更新该场景（精准）；
+     * 2. 未传 sceneId 且 relType=区域 时，relIds 本身可能是场景ID（泛光节目场景），直接命中（复用已查询的 scenes）；
+     * 3. 仍未命中则反查 lighting_scene_detail，把明细中包含这些控制目标（relType+relId）的场景全部更新。
+     * 操作类型值：开启/关闭，保证 scene/listPage 返回的 operationType 与最后一次控制一致。
+     * （lighting_scene.status 保持 启用/禁用 语义，不做开关状态）
+     */
+    private void syncSceneOperationType(String relType, Set<Long> ids, String op, Long sceneId,
+                                        List<org.jeecg.modules.bems.lighting.entity.LightingScene> scenes) {
+        try {
+            Set<Long> sceneIds = new HashSet<>();
+            // 1. 前端指定场景：精准更新，不做反查
+            if(sceneId != null){
+                sceneIds.add(sceneId);
+            }else{
+                // 2. relType=区域 时，relIds 可能本身就是场景ID（泛光节目场景），直接命中
+                if(LightingPlan.REL_TYPE_AREA.equals(relType) && CollectionUtil.isNotEmpty(scenes)){
+                    scenes.forEach(s -> sceneIds.add(s.getId()));
+                }
+                // 3. 反查明细：场景明细中包含这些目标（区域ID或回路ID）的场景
+                if(sceneIds.isEmpty()){
+                    List<org.jeecg.modules.bems.lighting.entity.LightingSceneDetail> details = lightingSceneDetailMapper.selectList(
+                            new LambdaQueryWrapper<org.jeecg.modules.bems.lighting.entity.LightingSceneDetail>()
+                                    .eq(org.jeecg.modules.bems.lighting.entity.LightingSceneDetail::getRelType, relType)
+                                    .in(org.jeecg.modules.bems.lighting.entity.LightingSceneDetail::getRelId, ids));
+                    if(CollectionUtil.isNotEmpty(details)){
+                        details.forEach(d -> sceneIds.add(d.getSceneId()));
+                    }
+                }
+            }
+            if(sceneIds.isEmpty()){
+                return;
+            }
+            // 批量更新场景明细的操作类型
+            org.jeecg.modules.bems.lighting.entity.LightingSceneDetail update = new org.jeecg.modules.bems.lighting.entity.LightingSceneDetail();
+            update.setOperationType(op);
+            lightingSceneDetailMapper.update(update, new LambdaQueryWrapper<org.jeecg.modules.bems.lighting.entity.LightingSceneDetail>()
+                    .in(org.jeecg.modules.bems.lighting.entity.LightingSceneDetail::getSceneId, sceneIds));
+            log.info("控制成功，同步场景明细操作类型为【{}】，场景ID：{}", op, sceneIds);
+        } catch (Exception e) {
+            // 操作类型同步失败不影响控制结果，只记录日志
+            log.error("同步场景明细操作类型失败：{}", e.getMessage(), e);
         }
     }
 }

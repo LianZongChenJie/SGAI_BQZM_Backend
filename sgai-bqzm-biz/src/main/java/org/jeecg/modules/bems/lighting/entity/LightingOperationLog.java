@@ -49,6 +49,19 @@ public class LightingOperationLog {
     public static final String LOG_TYPE_CIRCUIT = "回路";
 
     /**
+     * 操作类型（operatorType）：手动（用户直接操作）
+     */
+    public static final String OPERATOR_TYPE_MANUAL = "手动";
+    /**
+     * 操作类型（operatorType）：定时（计划到点自动执行）
+     */
+    public static final String OPERATOR_TYPE_PLAN = "定时";
+    /**
+     * 操作类型（operatorType）：场景（场景一键执行）
+     */
+    public static final String OPERATOR_TYPE_SCENE = "场景";
+
+    /**
      * 主键（雪花ID，JSON 序列化为字符串避免前端精度丢失）
      */
     @TableId(type = IdType.ASSIGN_ID)
@@ -107,7 +120,7 @@ public class LightingOperationLog {
     private String ipAddress;
 
     /**
-     * 操作类型：自动、手动
+     * 操作类型：手动、定时、场景
      */
     private String operatorType;
 

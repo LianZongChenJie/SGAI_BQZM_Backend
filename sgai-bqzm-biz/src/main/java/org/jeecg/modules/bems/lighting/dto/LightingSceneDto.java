@@ -72,6 +72,12 @@ public class LightingSceneDto {
     private Long sort;
 
     /**
+     * 泛光节目ID（可选，场景按区域执行时若配置了节目ID则走泛光节目控制）
+     */
+    @ApiModelProperty(value = "泛光节目ID（可选）")
+    private String groupId;
+
+    /**
      * 标签ID（可选，用于场景分组/筛选）
      */
     @ApiModelProperty(value = "标签ID（可选，用于场景分组/筛选）")

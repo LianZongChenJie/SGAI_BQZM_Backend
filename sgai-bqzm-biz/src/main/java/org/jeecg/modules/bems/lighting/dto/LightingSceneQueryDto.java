@@ -29,6 +29,11 @@ public class LightingSceneQueryDto {
     private String status;
 
     /**
+     * 泛光节目ID（精确匹配）
+     */
+    private String groupId;
+
+    /**
      * 标签ID（精确匹配）
      */
     private String tagId;

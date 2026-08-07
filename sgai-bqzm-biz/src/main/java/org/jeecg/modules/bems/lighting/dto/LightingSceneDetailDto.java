@@ -53,6 +53,12 @@ public class LightingSceneDetailDto {
     private String status;
 
     /**
+     * 泛光节目ID（场景按区域执行时若配置了节目ID则走泛光节目控制）
+     */
+    @ApiModelProperty(value = "泛光节目ID")
+    private String groupId;
+
+    /**
      * 执行时间 HH:mm:ss（场景无定时配置，恒为 null）
      */
     @ApiModelProperty(value = "执行时间（场景无定时配置，恒为 null）")

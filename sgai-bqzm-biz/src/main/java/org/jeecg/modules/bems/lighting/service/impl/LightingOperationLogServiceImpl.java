@@ -45,7 +45,20 @@ public class LightingOperationLogServiceImpl extends ServiceImpl<LightingOperati
         data.setOperationTime(time);
         data.setOperationType(operationType);
         data.setOperationBy(operationBy);
+        // 操作类型（operatorType）：有父日志时继承父日志，否则默认手动
+        data.setOperatorType(resolveOperatorType(parentId));
         super.save(data);
+    }
+
+    @Override
+    public String resolveOperatorType(Long parentId) {
+        if (parentId != null) {
+            LightingOperationLog parent = super.getById(parentId);
+            if (parent != null && StrUtil.isNotEmpty(parent.getOperatorType())) {
+                return parent.getOperatorType();
+            }
+        }
+        return LightingOperationLog.OPERATOR_TYPE_MANUAL;
     }
 
     @Override

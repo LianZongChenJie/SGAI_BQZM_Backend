@@ -36,6 +36,13 @@ public interface ILightingOperationLogService extends IService<LightingOperation
     void saveLog(String logType, Long parentId, String relType, Long relId, String name, LocalDateTime time, String operationType, String operationBy);
 
     /**
+     * 解析操作类型：有父日志时继承父日志的操作类型，否则默认"手动"
+     * @param parentId 父日志ID（顶层日志传null）
+     * @return 操作类型：手动/定时/场景
+     */
+    String resolveOperatorType(Long parentId);
+
+    /**
      * 批量保存子日志
      * @param logList 日志列表
      */

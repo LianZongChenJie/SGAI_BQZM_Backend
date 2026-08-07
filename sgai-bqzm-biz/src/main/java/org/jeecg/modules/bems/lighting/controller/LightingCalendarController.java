@@ -240,6 +240,7 @@ public class LightingCalendarController {
                     target.setRelId(circuit.getId());
                     target.setRelName(circuit.getCircuitName());
                     target.setRelType("回路");
+                    target.setElectricCurrent(circuit.getElectricCurrent());
                     targets.add(target);
                 }
             }
@@ -576,5 +577,7 @@ public class LightingCalendarController {
         private String relName;
         @ApiModelProperty("目标类型：区域、回路")
         private String relType;
+        @ApiModelProperty("电流（A），来自 lighting_circuit.electric_current，仅回路有值")
+        private Double electricCurrent;
     }
 }

@@ -28,4 +28,11 @@ public class LightingPlanControlDto {
      */
     @ApiModelProperty(value = "操作类型：开启、关闭（兼容 OPEN/CLOSE）")
     private String operationType;
+
+    /**
+     * 场景ID（可选）。传了则控制后只同步该场景的状态；
+     * 不传则自动反查：明细包含这些目标的场景全部同步状态。
+     */
+    @ApiModelProperty(value = "场景ID（可选），控制后同步该场景开关状态")
+    private Long sceneId;
 }

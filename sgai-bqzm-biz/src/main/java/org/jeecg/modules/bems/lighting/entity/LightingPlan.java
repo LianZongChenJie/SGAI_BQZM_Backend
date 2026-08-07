@@ -123,6 +123,12 @@ public class LightingPlan extends BaseEntity {
     @TableField(exist = false)
     private String tagName;
 
+    /**
+     * 泛光节目ID（非表字段，场景列表出参展示用，照明计划本身无此字段）
+     */
+    @TableField(exist = false)
+    private String groupId;
+
 
     public LocalTime getExecutionLocalTime(){
         if(StringUtils.isEmpty(executionTime)){

@@ -138,6 +138,7 @@ public class LightingHomeServiceImpl implements ILightingHomeService {
         mainLog.setName("一键全开");
         mainLog.setOperationTime(LocalDateTime.now());
         mainLog.setOperationType("一键全开");
+        mainLog.setOperatorType(LightingOperationLog.OPERATOR_TYPE_MANUAL);
         // 设置操作人
         String operationBy = "照明计划";
         try {
@@ -176,6 +177,7 @@ public class LightingHomeServiceImpl implements ILightingHomeService {
         mainLog.setName("一键全关");
         mainLog.setOperationTime(LocalDateTime.now());
         mainLog.setOperationType("一键全关");
+        mainLog.setOperatorType(LightingOperationLog.OPERATOR_TYPE_MANUAL);
         // 设置操作人
         String operationBy = "照明计划";
         try {
