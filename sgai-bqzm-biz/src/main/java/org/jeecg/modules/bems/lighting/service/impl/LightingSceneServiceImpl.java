@@ -261,26 +261,7 @@ public class LightingSceneServiceImpl extends ServiceImpl<LightingSceneMapper, L
 
         // 记录场景操作日志（父日志）
         String operationType = details.get(0).getOperationType();
-        LightingOperationLog sceneLog = new LightingOperationLog();
-        sceneLog.setLogType(LightingOperationLog.LOG_TYPE_SCENE);
-        sceneLog.setParentId(null);
-        sceneLog.setRelType("场景");
-        sceneLog.setRelId(id);
-        sceneLog.setName(scene.getSceneName());
-        sceneLog.setOperationTime(java.time.LocalDateTime.now());
-        sceneLog.setOperationType("场景" + operationType);
-        // 设置操作人
-        String operationBy = "照明计划";
-        try {
-            org.jeecg.common.system.vo.LoginUser sysUser = (org.jeecg.common.system.vo.LoginUser) org.apache.shiro.SecurityUtils.getSubject().getPrincipal();
-            if (sysUser != null) {
-                operationBy = sysUser.getUsername();
-            }
-        } catch (Exception e) {
-            // 异步场景中SecurityManager不可用，使用默认用户
-        }
-        sceneLog.setOperationBy(operationBy);
-        sceneLog.setOperatorType(LightingOperationLog.OPERATOR_TYPE_SCENE);
+        LightingOperationLog sceneLog = buildSceneLog(scene, operationType, id);
         lightingOperationLogService.save(sceneLog);
 
         log.info("开始执行场景【{}】, 目标数：{}", scene.getSceneName(), details.size());
@@ -293,6 +274,82 @@ public class LightingSceneServiceImpl extends ServiceImpl<LightingSceneMapper, L
                 throw new JeecgBootException("场景明细 relType 必须为 区域 或 回路");
             }
         }
+    }
+
+    /**
+     * 场景全开/全关：根据场景id和操作类型（开启/关闭 或 OPEN/CLOSE），
+     * 对场景下所有区域、回路统一执行开或关（忽略明细各自的 operationType），自动记录控制日志。
+     * 不加 @Transactional，与 apply/老引擎 execution() 一致，避免 MQ 已下发但日志被回滚的不一致。
+     */
+    @Override
+    public void control(Long sceneId, String operationType) {
+        if (sceneId == null) {
+            throw new JeecgBootException("场景id不能为空");
+        }
+        // 操作类型兼容：开启/关闭 或 OPEN/CLOSE
+        String op = operationType;
+        if ("OPEN".equalsIgnoreCase(op)) {
+            op = LightingScene.OPERATION_TYPE_OPEN;
+        } else if ("CLOSE".equalsIgnoreCase(op)) {
+            op = LightingScene.OPERATION_TYPE_CLOSE;
+        }
+        if (!LightingScene.OPERATION_TYPE_OPEN.equals(op) && !LightingScene.OPERATION_TYPE_CLOSE.equals(op)) {
+            throw new JeecgBootException("operationType 必须为 开启/关闭 或 OPEN/CLOSE");
+        }
+        LightingScene scene = super.getById(sceneId);
+        if (scene == null) {
+            throw new JeecgBootException("场景不存在");
+        }
+        List<LightingSceneDetail> details = detailMapper.selectList(
+                new LambdaQueryWrapper<LightingSceneDetail>()
+                        .eq(LightingSceneDetail::getSceneId, sceneId)
+                        .orderByAsc(LightingSceneDetail::getSort));
+        if (CollectionUtil.isEmpty(details)) {
+            throw new JeecgBootException("场景下没有控制目标，请先添加明细");
+        }
+
+        // 记录场景操作日志（父日志，操作类型=场景），子日志通过 parentId 自动继承
+        LightingOperationLog sceneLog = buildSceneLog(scene, op, sceneId);
+        lightingOperationLogService.save(sceneLog);
+
+        log.info("场景【{}】{} 控制开始，目标数：{}", scene.getSceneName(), op, details.size());
+        for (LightingSceneDetail detail : details) {
+            if (LightingScene.REL_TYPE_AREA.equals(detail.getRelType())) {
+                executeArea(detail, sceneLog.getId(), op);
+            } else if (LightingScene.REL_TYPE_CIRCUIT.equals(detail.getRelType())) {
+                executeCircuit(detail, sceneLog.getId(), op);
+            } else {
+                throw new JeecgBootException("场景明细 relType 必须为 区域 或 回路");
+            }
+        }
+    }
+
+    /**
+     * 构建场景操作父日志（logType=场景、operatorType=场景、name=场景名、operationType=场景+开/关），
+     * apply 与 control 共用，子日志通过 parentId 自动继承操作类型。
+     */
+    private LightingOperationLog buildSceneLog(LightingScene scene, String op, Long relId) {
+        LightingOperationLog sceneLog = new LightingOperationLog();
+        sceneLog.setLogType(LightingOperationLog.LOG_TYPE_SCENE);
+        sceneLog.setParentId(null);
+        sceneLog.setRelType("场景");
+        sceneLog.setRelId(relId);
+        sceneLog.setName(scene.getSceneName());
+        sceneLog.setOperationTime(java.time.LocalDateTime.now());
+        sceneLog.setOperationType("场景" + op);
+        // 设置操作人
+        String operationBy = "照明计划";
+        try {
+            org.jeecg.common.system.vo.LoginUser sysUser = (org.jeecg.common.system.vo.LoginUser) org.apache.shiro.SecurityUtils.getSubject().getPrincipal();
+            if (sysUser != null) {
+                operationBy = sysUser.getUsername();
+            }
+        } catch (Exception e) {
+            // 异步场景中SecurityManager不可用，使用默认用户
+        }
+        sceneLog.setOperationBy(operationBy);
+        sceneLog.setOperatorType(LightingOperationLog.OPERATOR_TYPE_SCENE);
+        return sceneLog;
     }
 
     /**
@@ -318,6 +375,28 @@ public class LightingSceneServiceImpl extends ServiceImpl<LightingSceneMapper, L
             lightingCircuitService.close(detail.getRelId(), parentId);
         } else {
             throw new JeecgBootException("场景明细 operationType 必须为 开启 或 关闭");
+        }
+    }
+
+    /**
+     * 区域目标按指定操作类型开/关（场景全开/全关：忽略明细自身 operationType）
+     */
+    private void executeArea(LightingSceneDetail detail, Long parentId, String op) {
+        if (LightingScene.OPERATION_TYPE_OPEN.equals(op)) {
+            lightingAreaService.open(detail.getRelId(), parentId);
+        } else {
+            lightingAreaService.close(detail.getRelId(), parentId);
+        }
+    }
+
+    /**
+     * 回路目标按指定操作类型开/关（场景全开/全关：忽略明细自身 operationType）
+     */
+    private void executeCircuit(LightingSceneDetail detail, Long parentId, String op) {
+        if (LightingScene.OPERATION_TYPE_OPEN.equals(op)) {
+            lightingCircuitService.open(detail.getRelId(), parentId);
+        } else {
+            lightingCircuitService.close(detail.getRelId(), parentId);
         }
     }
 

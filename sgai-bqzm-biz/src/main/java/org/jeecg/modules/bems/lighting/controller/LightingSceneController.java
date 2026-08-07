@@ -85,6 +85,16 @@ public class LightingSceneController {
     }
 
     /**
+     * 场景全开/全关：根据场景id和操作类型，对场景下所有区域、回路统一执行开或关
+     */
+    @ApiOperation("场景全开/全关（sceneId + operationType：开启/关闭 或 OPEN/CLOSE，作用于场景下所有区域和回路，自动记录控制日志）")
+    @PostMapping("/control")
+    public Result<String> control(@RequestParam Long sceneId, @RequestParam String operationType) {
+        service.control(sceneId, operationType);
+        return Result.ok();
+    }
+
+    /**
      * 按空间查询：该空间下的所有场景（含明细）和所有回路（含区域名/空间名）
      */
     @ApiOperation("按空间查询场景和回路（spaceId 传 lighting_area.space，如 1/2/3/4/901/902）")

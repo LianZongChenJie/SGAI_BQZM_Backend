@@ -47,6 +47,12 @@ public interface ILightingSceneService extends IService<LightingScene> {
     void apply(Long id);
 
     /**
+     * 场景全开/全关：根据场景id和操作类型（开启/关闭 或 OPEN/CLOSE），
+     * 对场景下所有区域、回路统一执行开或关（忽略明细各自的 operationType），自动记录控制日志
+     */
+    void control(Long sceneId, String operationType);
+
+    /**
      * 按空间查询：该空间下的所有场景（含明细）和所有回路（含区域名/空间名）
      * 场景归属规则：场景明细中任一目标（区域或回路）属于该空间即视为该空间的场景
      *
