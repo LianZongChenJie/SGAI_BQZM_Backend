@@ -9,6 +9,8 @@ import org.jeecg.modules.bems.lighting.dto.LightingSpaceScenesVo;
 import org.jeecg.modules.bems.lighting.entity.LightingPlan;
 import org.jeecg.modules.bems.lighting.entity.LightingScene;
 
+import javax.servlet.http.HttpServletResponse;
+
 /**
  * 照明场景 Service
  * 场景独立存储于 lighting_scene 表，不绑定定时任务（lighting_plan 表），仅用于一键开关灯。
@@ -20,6 +22,11 @@ public interface ILightingSceneService extends IService<LightingScene> {
      * 分页查询场景列表（出参为 LightingPlan 结构，与 plan/listPage 一致：planName/relType/relIds/operationType/status/sort）
      */
     IPage<LightingPlan> listPage(LightingSceneQueryDto params);
+
+    /**
+     * 导出场景列表Excel（查询条件同 listPage，不分页）
+     */
+    void exportExcel(LightingSceneQueryDto params, HttpServletResponse response);
 
     /**
      * 新增场景（含明细）

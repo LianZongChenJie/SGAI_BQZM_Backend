@@ -13,6 +13,7 @@ import org.jeecg.modules.bems.permission.annotation.DataPermission;
 import org.jeecg.modules.bems.permission.annotation.DataPermissionField;
 import org.springframework.web.bind.annotation.*;
 
+import javax.servlet.http.HttpServletResponse;
 import java.util.List;
 import java.util.stream.Collectors;
 
@@ -50,6 +51,17 @@ public class LightingAreaController {
     @GetMapping("/listPage1")
     public Result<?> listPage1(LightingAreaQueryDto params){
         return Result.ok(service.listPage1(params));
+    }
+
+    /**
+     * 导出区域列表Excel（查询条件同 listPage1，不分页）
+     * @param params 查询参数
+     */
+    @ApiOperation("导出区域列表Excel")
+    @DataPermission
+    @GetMapping("/export")
+    public void export(LightingAreaQueryDto params, HttpServletResponse response){
+        service.exportExcel(params, response);
     }
 
     /**

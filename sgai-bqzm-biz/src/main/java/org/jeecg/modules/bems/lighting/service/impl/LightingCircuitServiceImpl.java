@@ -200,21 +200,13 @@ public class LightingCircuitServiceImpl extends ServiceImpl<CircuitMapper, Light
             throw new JeecgBootException("回路编码为空，无法控制");
         }
 
-        // 拆分 circuit_code：第一个 "-" 前面是 GatewayAdr，后面是 KnxAdr
-        int dashIndex = circuitCode.indexOf('-');
-        if(dashIndex <= 0 || dashIndex >= circuitCode.length() - 1){
-            throw new JeecgBootException("回路编码格式不对，无法控制：" + circuitCode);
-        }
-        String gatewayAdr = circuitCode.substring(0, dashIndex);
-        String knxAdr = circuitCode.substring(dashIndex + 1);
-
-        String value = type ? "1" : "0";
+        String value = type ? "100" : "0";
         String operName = type ? "回路开启" : "回路关闭";
 
-        log.info("【1号馆】回路控制：circuitName={}, 操作={}, gatewayAdr={}, knxAdr={}",
-                circuit.getCircuitName(), operName, gatewayAdr, knxAdr);
+        log.info("【1号馆】回路控制：circuitName={}, 操作={}, circuitCode={}",
+                circuit.getCircuitName(), operName, circuitCode);
 
-        sendService.send1hgControl(gatewayAdr, knxAdr, value);
+        sendService.send1hgControl(circuitCode, value);
 
         lightingOperationLogService.saveLog(LightingOperationLog.LOG_TYPE_CIRCUIT, parentId,
                 LightingOperationLog.REL_TYPE_CIRCUIT, circuit.getId(),

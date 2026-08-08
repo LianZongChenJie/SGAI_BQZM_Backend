@@ -1,6 +1,10 @@
 package org.jeecg.modules.bems.lighting.service.impl;
 
 import cn.hutool.core.collection.CollectionUtil;
+import org.apache.poi.ss.usermodel.Workbook;
+import org.jeecgframework.poi.excel.ExcelExportUtil;
+import org.jeecgframework.poi.excel.entity.ExportParams;
+import org.jeecgframework.poi.excel.entity.enmus.ExcelType;
 import com.baomidou.mybatisplus.core.conditions.Wrapper;
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.baomidou.mybatisplus.core.conditions.update.LambdaUpdateWrapper;
@@ -10,6 +14,7 @@ import com.baomidou.mybatisplus.extension.service.impl.ServiceImpl;
 import lombok.extern.slf4j.Slf4j;
 import org.apache.commons.lang3.StringUtils;
 import org.jeecg.common.exception.JeecgBootException;
+import org.jeecg.modules.bems.lighting.dto.LightingAreaExportDto;
 import org.jeecg.modules.bems.lighting.dto.LightingAreaQueryDto;
 import org.jeecg.modules.bems.lighting.entity.LightingArea;
 import org.jeecg.modules.bems.lighting.entity.LightingCircuit;
@@ -23,11 +28,18 @@ import org.jeecg.modules.bems.lighting.service.ILightingOperationLogService;
 import org.jeecg.modules.bems.lighting.service.LightingService;
 import org.jeecg.modules.bems.lighting.mq.send.LightingSendService;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.beans.BeanUtils;
 import org.springframework.context.annotation.Lazy;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
+import javax.servlet.http.HttpServletResponse;
+import java.io.IOException;
+import java.io.OutputStream;
+import java.net.URLEncoder;
+
 import java.time.LocalDateTime;
+import java.time.format.DateTimeFormatter;
 import java.util.Collection;
 import java.util.Collections;
 import java.util.List;
@@ -83,14 +95,11 @@ public class LightingAreaServiceImpl extends ServiceImpl<LightingAreaMapper, Lig
 
     @Override
     public IPage<LightingArea> listPage1(LightingAreaQueryDto params) {
-        LambdaQueryWrapper<LightingArea> queryWrapper = new LambdaQueryWrapper<LightingArea>()
-                .like(StringUtils.isNotEmpty(params.getRelName()),LightingArea::getRelName, params.getRelName())
-                .eq(StringUtils.isNotEmpty(params.getSpace()),LightingArea::getSpace,params.getSpace())
-                .eq(params.getDistrictId() != null,LightingArea::getDistrictId,params.getDistrictId())
-                .like(StringUtils.isNotEmpty(params.getAreaName()),LightingArea::getAreaName, params.getAreaName())
-                .orderByAsc(LightingArea::getSort);
+        LambdaQueryWrapper<LightingArea> queryWrapper = buildQueryWrapper(params);
         IPage<LightingArea> page = super.page(new Page<>(params.getPageNo(), params.getPageSize()),queryWrapper);
         fillDistrictName(page.getRecords());
+        // 区域状态按区域下回路的实际状态计算（任一回路开启则区域为开启）
+        fillStatusByCircuit(page.getRecords());
         return page;
     }
 
@@ -186,6 +195,87 @@ public class LightingAreaServiceImpl extends ServiceImpl<LightingAreaMapper, Lig
         List<LightingArea> list = super.list(new LambdaQueryWrapper<LightingArea>().in(LightingArea::getId,ids));
         fillDistrictName(list);
         return list;
+    }
+
+    @Override
+    public void exportExcel(LightingAreaQueryDto params, HttpServletResponse response) {
+        // 查询条件与 listPage1 一致，不分页查全量
+        List<LightingArea> list = super.list(buildQueryWrapper(params));
+        fillDistrictName(list);
+        List<LightingAreaExportDto> rows = list.stream().map(this::toExportDto).collect(Collectors.toList());
+        try (Workbook workbook = ExcelExportUtil.exportExcel(
+                new ExportParams("区域列表", "区域列表", ExcelType.XSSF), LightingAreaExportDto.class, rows);
+             OutputStream out = response.getOutputStream()) {
+            response.setContentType("application/vnd.openxmlformats-officedocument.spreadsheetml.sheet;charset=utf-8");
+            String fileName = URLEncoder.encode("区域列表_" + LocalDateTime.now().format(DateTimeFormatter.ofPattern("yyyyMMddHHmmss")), "UTF-8")
+                    .replaceAll("\\+", "%20");
+            response.setHeader("Content-Disposition", "attachment;filename=" + fileName + ".xlsx");
+            workbook.write(out);
+            out.flush();
+        } catch (IOException e) {
+            log.error("导出区域列表Excel失败", e);
+            throw new JeecgBootException("导出Excel失败");
+        }
+    }
+
+    /**
+     * 构建区域查询条件（listPage1 与导出共用）
+     */
+    private LambdaQueryWrapper<LightingArea> buildQueryWrapper(LightingAreaQueryDto params) {
+        return new LambdaQueryWrapper<LightingArea>()
+                .like(StringUtils.isNotEmpty(params.getRelName()), LightingArea::getRelName, params.getRelName())
+                .eq(StringUtils.isNotEmpty(params.getSpace()), LightingArea::getSpace, params.getSpace())
+                .eq(params.getDistrictId() != null, LightingArea::getDistrictId, params.getDistrictId())
+                .like(StringUtils.isNotEmpty(params.getAreaName()), LightingArea::getAreaName, params.getAreaName())
+                .orderByAsc(LightingArea::getSort);
+    }
+
+    /**
+     * 区域 → 导出行
+     */
+    private LightingAreaExportDto toExportDto(LightingArea area) {
+        LightingAreaExportDto dto = new LightingAreaExportDto();
+        BeanUtils.copyProperties(area, dto);
+        dto.setStartTime(formatTime(area.getStartTime()));
+        dto.setClosingTime(formatTime(area.getClosingTime()));
+        return dto;
+    }
+
+    /**
+     * 时间格式化
+     */
+    private String formatTime(LocalDateTime time) {
+        return time == null ? "" : time.format(DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss"));
+    }
+
+    /**
+     * 区域状态按回路实际状态计算：区域下任一回路为"开启"则区域为"开启"，否则为"关闭"。
+     * （与 /bems/lighting/circuit/listPage?areaId=xx 返回的回路状态保持一致，只改出参不落库）
+     */
+    private void fillStatusByCircuit(List<LightingArea> areas) {
+        if(CollectionUtil.isEmpty(areas)){
+            return;
+        }
+        Set<Long> areaIds = areas.stream()
+                .map(LightingArea::getId)
+                .filter(Objects::nonNull)
+                .collect(Collectors.toSet());
+        if(areaIds.isEmpty()){
+            return;
+        }
+        // 一次性查出这些区域下的所有回路
+        List<LightingCircuit> circuits = circuitService.list(
+                new LambdaQueryWrapper<LightingCircuit>().in(LightingCircuit::getAreaId, areaIds));
+        // 有回路处于开启状态的区域ID集合
+        Set<Long> openAreaIds = circuits.stream()
+                .filter(c -> c.getAreaId() != null && LightingCircuit.STATUS_ON.equals(c.getStatus()))
+                .map(LightingCircuit::getAreaId)
+                .collect(Collectors.toSet());
+        for(LightingArea area : areas){
+            area.setStatus(openAreaIds.contains(area.getId())
+                    ? LightingCircuit.STATUS_ON
+                    : LightingCircuit.STATUS_OFF);
+        }
     }
 
     /**
@@ -303,16 +393,8 @@ public class LightingAreaServiceImpl extends ServiceImpl<LightingAreaMapper, Lig
                 if(StringUtils.isEmpty(circuitCode)){
                     continue;
                 }
-                // 拆分 circuit_code：第一个 "-" 前面是 GatewayAdr，后面是 KnxAdr
-                int dashIndex = circuitCode.indexOf('-');
-                if(dashIndex <= 0 || dashIndex >= circuitCode.length() - 1){
-                    log.warn("【1号馆】回路编码格式不对，跳过：circuitCode={}", circuitCode);
-                    continue;
-                }
-                String gatewayAdr = circuitCode.substring(0, dashIndex);
-                String knxAdr = circuitCode.substring(dashIndex + 1);
 
-                sendService.send1hgControl(gatewayAdr, knxAdr, value);
+                sendService.send1hgControl(circuitCode, value);
             } catch (Exception e){
                 log.error("【1号馆】发送回路控制消息失败：circuitId={}, circuitName={}", circuit.getId(), circuit.getCircuitName(), e);
             }

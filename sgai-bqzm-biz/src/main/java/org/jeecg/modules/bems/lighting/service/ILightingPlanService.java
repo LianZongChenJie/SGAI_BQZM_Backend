@@ -7,9 +7,16 @@ import org.jeecg.modules.bems.lighting.dto.LightingPlanQueryDto;
 import org.jeecg.modules.bems.lighting.entity.LightingPlan;
 import org.jeecg.modules.bems.lighting.entity.LightingPlanExecutionTime;
 
+import javax.servlet.http.HttpServletResponse;
+
 public interface ILightingPlanService extends IService<LightingPlan> {
 
     IPage<LightingPlan> listPage(LightingPlanQueryDto param);
+
+    /**
+     * 导出计划列表Excel（查询条件同 listPage，不分页）
+     */
+    void exportExcel(LightingPlanQueryDto param, HttpServletResponse response);
 
     void add(LightingPlan plan);
 

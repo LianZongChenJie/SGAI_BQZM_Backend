@@ -12,6 +12,8 @@ import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
 
+import javax.servlet.http.HttpServletResponse;
+
 /**
  * 照明控制记录（控制日志）
  */
@@ -32,6 +34,15 @@ public class LightingOperationLogController {
     @GetMapping("/listPage")
     public Result<IPage<LightingOperationLog>> listPage(LightingOperationLogQueryDto param) {
         return Result.ok(service.listPage(param));
+    }
+
+    /**
+     * 导出控制日志Excel（查询条件同 listPage，不分页）
+     */
+    @ApiOperation("导出控制日志Excel")
+    @GetMapping("/export")
+    public void export(LightingOperationLogQueryDto param, HttpServletResponse response) {
+        service.exportExcel(param, response);
     }
 
     /**

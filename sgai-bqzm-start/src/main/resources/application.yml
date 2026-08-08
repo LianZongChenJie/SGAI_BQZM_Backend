@@ -1,10 +1,10 @@
 server:
-  port: 7011
+  port: 7010
 spring:
   main:
     allow-circular-references: true
   application:
-    name: sgai-bqzm-start
+    name: sgai-bqzm
   config:
     import:
       - optional:nacos:jeecg.yaml

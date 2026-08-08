@@ -13,6 +13,8 @@ import org.jeecg.modules.bems.lighting.entity.LightingPlan;
 import org.jeecg.modules.bems.lighting.service.ILightingSceneService;
 import org.springframework.web.bind.annotation.*;
 
+import javax.servlet.http.HttpServletResponse;
+
 /**
  * 照明-场景管理
  * 场景独立存储于 lighting_scene 表，不绑定定时任务（lighting_plan 表），仅用于一键开关灯。
@@ -33,6 +35,15 @@ public class LightingSceneController {
     @GetMapping("/listPage")
     public Result<IPage<LightingPlan>> listPage(LightingSceneQueryDto params) {
         return Result.ok(service.listPage(params));
+    }
+
+    /**
+     * 导出场景列表Excel（查询条件同 listPage，不分页）
+     */
+    @ApiOperation("导出场景列表Excel")
+    @GetMapping("/export")
+    public void export(LightingSceneQueryDto params, HttpServletResponse response) {
+        service.exportExcel(params, response);
     }
 
     /**

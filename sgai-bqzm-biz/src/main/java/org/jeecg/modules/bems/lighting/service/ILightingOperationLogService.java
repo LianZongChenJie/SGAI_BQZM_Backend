@@ -5,6 +5,7 @@ import com.baomidou.mybatisplus.extension.service.IService;
 import org.jeecg.modules.bems.lighting.dto.LightingOperationLogQueryDto;
 import org.jeecg.modules.bems.lighting.entity.LightingOperationLog;
 
+import javax.servlet.http.HttpServletResponse;
 import java.time.LocalDateTime;
 import java.util.List;
 
@@ -53,6 +54,11 @@ public interface ILightingOperationLogService extends IService<LightingOperation
      * 支持按日志类型、关联类型、操作类型、操作时间段筛选
      */
     IPage<LightingOperationLog> listPage(LightingOperationLogQueryDto params);
+
+    /**
+     * 导出控制日志Excel（查询条件同 listPage，不分页）
+     */
+    void exportExcel(LightingOperationLogQueryDto params, HttpServletResponse response);
 
     /**
      * 查询日志详情（包含子日志列表）

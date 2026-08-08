@@ -8,9 +8,14 @@ import com.baomidou.mybatisplus.extension.service.impl.ServiceImpl;
 import lombok.AllArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.apache.commons.lang3.StringUtils;
+import org.apache.poi.ss.usermodel.Workbook;
 import org.jeecg.common.exception.JeecgBootException;
 import org.jeecg.modules.bems.lighting.dto.LightingPlanDetailDto;
+import org.jeecg.modules.bems.lighting.dto.LightingPlanExportDto;
 import org.jeecg.modules.bems.lighting.dto.LightingPlanQueryDto;
+import org.jeecgframework.poi.excel.ExcelExportUtil;
+import org.jeecgframework.poi.excel.entity.ExportParams;
+import org.jeecgframework.poi.excel.entity.enmus.ExcelType;
 import org.jeecg.modules.bems.lighting.entity.LightingArea;
 import org.jeecg.modules.bems.lighting.entity.LightingCircuit;
 import org.jeecg.modules.bems.lighting.entity.LightingOperationLog;
@@ -24,8 +29,15 @@ import org.jeecg.modules.bems.lighting.service.*;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
+import javax.servlet.http.HttpServletResponse;
+import java.io.IOException;
+import java.io.OutputStream;
+import java.net.URLEncoder;
 import java.time.LocalDate;
+import java.time.LocalDateTime;
 import java.time.LocalTime;
+import java.time.ZoneId;
+import java.time.format.DateTimeFormatter;
 import java.time.temporal.ChronoUnit;
 import java.util.*;
 import java.util.function.Function;
@@ -74,6 +86,77 @@ public class LightingPlanServiceImpl extends ServiceImpl<LightingPlanMapper, Lig
             plan.setExecutionInfo(executionTimeMap.get(plan.getId()));
         });
         return page;
+    }
+
+    @Override
+    public void exportExcel(LightingPlanQueryDto param, HttpServletResponse response) {
+        // 查询条件与 listPage 一致，不分页查全量
+        List<LightingPlan> list = super.list(new LambdaQueryWrapper<LightingPlan>()
+                .eq(StringUtils.isNotEmpty(param.getRelType()), LightingPlan::getRelType, param.getRelType())
+                .gt(StringUtils.isNotEmpty(param.getStartTime()), LightingPlan::getExecutionTime, param.getStartTime())
+                .lt(StringUtils.isNotEmpty(param.getEndTime()), LightingPlan::getExecutionTime, param.getEndTime())
+                .orderByAsc(LightingPlan::getSort));
+        Map<Long, LightingPlanExecutionTime> executionTimeMap = new HashMap<>();
+        if (CollectionUtil.isNotEmpty(list)) {
+            Map<Long, LightingPlanExecutionTime> fetched = executionTimeService.getByPlanIds(list.stream().map(LightingPlan::getId).toList())
+                    .stream().collect(Collectors.toMap(LightingPlanExecutionTime::getPlanId, Function.identity()));
+            executionTimeMap.putAll(fetched);
+        }
+        List<LightingPlanExportDto> rows = list.stream()
+                .map(plan -> toExportDto(plan, executionTimeMap.get(plan.getId())))
+                .collect(Collectors.toList());
+        writeExcel("计划列表", LightingPlanExportDto.class, rows, response);
+    }
+
+    private LightingPlanExportDto toExportDto(LightingPlan plan, LightingPlanExecutionTime info) {
+        LightingPlanExportDto dto = new LightingPlanExportDto();
+        dto.setPlanName(plan.getPlanName());
+        dto.setRelType(plan.getRelType());
+        dto.setRelIds(plan.getRelIds());
+        dto.setExecutionTime(plan.getExecutionTime());
+        dto.setOperationType(plan.getOperationType());
+        dto.setStatus(plan.getStatus());
+        dto.setPlanType(plan.getPlanType());
+        dto.setCycleType(plan.getCycleType());
+        if (info != null) {
+            dto.setStartDate(info.getStartDate());
+            dto.setEndDate(info.getEndDate());
+            dto.setEnabledWeek(info.getEnabledWeek());
+        }
+        dto.setTagId(plan.getTagId());
+        dto.setTagName(plan.getTagName());
+        dto.setGroupId(plan.getGroupId());
+        dto.setSort(plan.getSort());
+        dto.setRemark(plan.getRemark());
+        dto.setCreateBy(plan.getCreateBy());
+        dto.setCreateTime(formatDateTime(plan.getCreateTime()));
+        dto.setUpdateBy(plan.getUpdateBy());
+        dto.setUpdateTime(formatDateTime(plan.getUpdateTime()));
+        return dto;
+    }
+
+    private void writeExcel(String title, Class<?> clazz, List<?> rows, HttpServletResponse response) {
+        try (Workbook workbook = ExcelExportUtil.exportExcel(
+                new ExportParams(title, title, ExcelType.XSSF), clazz, rows);
+             OutputStream out = response.getOutputStream()) {
+            response.setContentType("application/vnd.openxmlformats-officedocument.spreadsheetml.sheet;charset=utf-8");
+            String fileName = URLEncoder.encode(title + "_" + LocalDateTime.now().format(DateTimeFormatter.ofPattern("yyyyMMddHHmmss")), "UTF-8")
+                    .replaceAll("\\+", "%20");
+            response.setHeader("Content-Disposition", "attachment;filename=" + fileName + ".xlsx");
+            workbook.write(out);
+            out.flush();
+        } catch (IOException e) {
+            log.error("导出" + title + "Excel失败", e);
+            throw new JeecgBootException("导出Excel失败");
+        }
+    }
+
+    private String formatDateTime(Date date) {
+        if (date == null) {
+            return null;
+        }
+        return date.toInstant().atZone(ZoneId.systemDefault())
+                .toLocalDateTime().format(DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss"));
     }
 
     @Override

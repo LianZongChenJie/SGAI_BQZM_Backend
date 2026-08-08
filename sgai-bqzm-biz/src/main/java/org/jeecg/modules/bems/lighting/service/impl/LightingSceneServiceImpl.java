@@ -8,11 +8,16 @@ import com.baomidou.mybatisplus.extension.service.impl.ServiceImpl;
 import lombok.AllArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.apache.commons.lang3.StringUtils;
+import org.apache.poi.ss.usermodel.Workbook;
 import org.jeecg.common.exception.JeecgBootException;
+import org.jeecg.modules.bems.lighting.dto.LightingPlanExportDto;
 import org.jeecg.modules.bems.lighting.dto.LightingSceneDetailDto;
 import org.jeecg.modules.bems.lighting.dto.LightingSceneDto;
 import org.jeecg.modules.bems.lighting.dto.LightingSceneQueryDto;
 import org.jeecg.modules.bems.lighting.dto.LightingSpaceScenesVo;
+import org.jeecgframework.poi.excel.ExcelExportUtil;
+import org.jeecgframework.poi.excel.entity.ExportParams;
+import org.jeecgframework.poi.excel.entity.enmus.ExcelType;
 import org.jeecg.modules.bems.lighting.entity.LightingArea;
 import org.jeecg.modules.bems.lighting.entity.LightingCircuit;
 import org.jeecg.modules.bems.lighting.entity.LightingPlan;
@@ -28,9 +33,17 @@ import org.jeecg.modules.bems.lighting.service.ILightingSceneService;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
+import javax.servlet.http.HttpServletResponse;
+import java.io.IOException;
+import java.io.OutputStream;
+import java.net.URLEncoder;
+import java.time.LocalDateTime;
+import java.time.ZoneId;
+import java.time.format.DateTimeFormatter;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.Comparator;
+import java.util.Date;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
@@ -87,6 +100,80 @@ public class LightingSceneServiceImpl extends ServiceImpl<LightingSceneMapper, L
                 .collect(Collectors.toList());
         page.setRecords(records);
         return page;
+    }
+
+    @Override
+    public void exportExcel(LightingSceneQueryDto params, HttpServletResponse response) {
+        // 名称过滤兼容前端只换 URL：planName 与 sceneName 等价，取任一非空值
+        String name = StringUtils.isNotEmpty(params.getPlanName()) ? params.getPlanName() : params.getSceneName();
+        // 查询条件与 listPage 一致，不分页查全量
+        List<LightingScene> scenes = super.list(new LambdaQueryWrapper<LightingScene>()
+                .like(StringUtils.isNotEmpty(name), LightingScene::getSceneName, name)
+                .eq(StringUtils.isNotEmpty(params.getSceneType()), LightingScene::getSceneType, params.getSceneType())
+                .eq(StringUtils.isNotEmpty(params.getStatus()), LightingScene::getStatus, params.getStatus())
+                .eq(StringUtils.isNotEmpty(params.getGroupId()), LightingScene::getGroupId, params.getGroupId())
+                .eq(StringUtils.isNotEmpty(params.getTagId()), LightingScene::getTagId, params.getTagId())
+                .like(StringUtils.isNotEmpty(params.getTagName()), LightingScene::getTagName, params.getTagName())
+                .orderByAsc(LightingScene::getSort));
+        List<LightingPlanExportDto> rows = new ArrayList<>();
+        if (CollectionUtil.isNotEmpty(scenes)) {
+            // 批量查询明细（避免 N+1）
+            List<Long> sceneIds = scenes.stream().map(LightingScene::getId).collect(Collectors.toList());
+            Map<Long, List<LightingSceneDetail>> detailMap = detailMapper.selectList(
+                            new LambdaQueryWrapper<LightingSceneDetail>().in(LightingSceneDetail::getSceneId, sceneIds))
+                    .stream().collect(Collectors.groupingBy(LightingSceneDetail::getSceneId));
+            rows = scenes.stream()
+                    .map(scene -> toPlan(scene, detailMap.getOrDefault(scene.getId(), new ArrayList<>())))
+                    .map(this::toExportDto)
+                    .collect(Collectors.toList());
+        }
+        writeExcel("场景列表", LightingPlanExportDto.class, rows, response);
+    }
+
+    private LightingPlanExportDto toExportDto(LightingPlan plan) {
+        LightingPlanExportDto dto = new LightingPlanExportDto();
+        dto.setPlanName(plan.getPlanName());
+        dto.setRelType(plan.getRelType());
+        dto.setRelIds(plan.getRelIds());
+        dto.setExecutionTime(plan.getExecutionTime());
+        dto.setOperationType(plan.getOperationType());
+        dto.setStatus(plan.getStatus());
+        dto.setPlanType(plan.getPlanType());
+        dto.setCycleType(plan.getCycleType());
+        dto.setTagId(plan.getTagId());
+        dto.setTagName(plan.getTagName());
+        dto.setGroupId(plan.getGroupId());
+        dto.setSort(plan.getSort());
+        dto.setRemark(plan.getRemark());
+        dto.setCreateBy(plan.getCreateBy());
+        dto.setCreateTime(formatDateTime(plan.getCreateTime()));
+        dto.setUpdateBy(plan.getUpdateBy());
+        dto.setUpdateTime(formatDateTime(plan.getUpdateTime()));
+        return dto;
+    }
+
+    private void writeExcel(String title, Class<?> clazz, List<?> rows, HttpServletResponse response) {
+        try (Workbook workbook = ExcelExportUtil.exportExcel(
+                new ExportParams(title, title, ExcelType.XSSF), clazz, rows);
+             OutputStream out = response.getOutputStream()) {
+            response.setContentType("application/vnd.openxmlformats-officedocument.spreadsheetml.sheet;charset=utf-8");
+            String fileName = URLEncoder.encode(title + "_" + LocalDateTime.now().format(DateTimeFormatter.ofPattern("yyyyMMddHHmmss")), "UTF-8")
+                    .replaceAll("\\+", "%20");
+            response.setHeader("Content-Disposition", "attachment;filename=" + fileName + ".xlsx");
+            workbook.write(out);
+            out.flush();
+        } catch (IOException e) {
+            log.error("导出" + title + "Excel失败", e);
+            throw new JeecgBootException("导出Excel失败");
+        }
+    }
+
+    private String formatDateTime(Date date) {
+        if (date == null) {
+            return null;
+        }
+        return date.toInstant().atZone(ZoneId.systemDefault())
+                .toLocalDateTime().format(DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss"));
     }
 
     /**

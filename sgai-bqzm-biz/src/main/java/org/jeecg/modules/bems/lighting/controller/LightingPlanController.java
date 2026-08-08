@@ -13,6 +13,8 @@ import org.jeecg.modules.bems.lighting.entity.LightingPlanExecutionTime;
 import org.jeecg.modules.bems.lighting.service.ILightingPlanService;
 import org.springframework.web.bind.annotation.*;
 
+import javax.servlet.http.HttpServletResponse;
+
 /**
  * 照明计划
  */
@@ -31,6 +33,15 @@ public class LightingPlanController {
     @GetMapping("/listPage")
     public Result<IPage<LightingPlan>> listPage(LightingPlanQueryDto params){
         return Result.ok(service.listPage(params));
+    }
+
+    /**
+     * 导出计划列表Excel（查询条件同 listPage，不分页）
+     */
+    @ApiOperation("导出计划列表Excel")
+    @GetMapping("/export")
+    public void export(LightingPlanQueryDto params, HttpServletResponse response){
+        service.exportExcel(params, response);
     }
 
     /**

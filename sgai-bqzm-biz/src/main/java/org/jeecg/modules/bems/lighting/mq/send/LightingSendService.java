@@ -135,20 +135,43 @@ public class LightingSendService {
 
     /**
      * 发送1号馆控制消息（通过MQ转发小程序发给181服务器）
-     * @param gatewayAdr 网关地址（Type=IpTunneling;HostAddress=xxx）
-     * @param knxAdr KNX地址
-     * @param value 值（100=开，0=关）
+     * @param circuitCode 完整的回路编码（格式：Type=IpTunneling;HostAddress=10.22.133.32-4.1.25-3/7/18）
+     * @param value 值（100=开，0=关，内部自动转成true/false）
      */
-    public void send1hgControl(String gatewayAdr, String knxAdr, String value) {
+    public void send1hgControl(String circuitCode, String value) {
+        // 从 circuitCode 中提取纯IP（HostAddress=后面的部分）
+        String ip = "";
+        if (circuitCode != null && circuitCode.contains("HostAddress=")) {
+            int start = circuitCode.indexOf("HostAddress=") + "HostAddress=".length();
+            int end = circuitCode.indexOf('-', start);
+            if (end < 0) {
+                end = circuitCode.length();
+            }
+            ip = circuitCode.substring(start, end);
+        }
+
+        // 提取最后一个 "-" 后面的作为 KnxAdr
+        String knxAdr = "";
+        if (circuitCode != null) {
+            int lastDash = circuitCode.lastIndexOf('-');
+            if (lastDash >= 0 && lastDash < circuitCode.length() - 1) {
+                knxAdr = circuitCode.substring(lastDash + 1);
+            }
+        }
+
+        // value 转换：100→true，0→false
+        String boolValue = "100".equals(value) ? "true" : "false";
+
         Map<String, Object> msg = new HashMap<>();
-        msg.put("GatewayAdr", gatewayAdr);
+        msg.put("GatewayAdr", ip);
         msg.put("KnxAdr", knxAdr);
-        msg.put("value", value);
-        msg.put("CollectionTime", LocalDateTimeUtil.format(LocalDateTime.now(), "yyyy-MM-dd HH:mm:ss"));
+        msg.put("value", boolValue);
+
         MessageProperties properties = new MessageProperties();
         properties.setContentType(MessageProperties.CONTENT_TYPE_JSON);
-        log.info("【1号馆】发送控制消息：GatewayAdr={}, KnxAdr={}, value={}", gatewayAdr, knxAdr, value);
+        log.info("【1号馆】发送控制消息：GatewayAdr={}, KnxAdr={}, value={}", ip, knxAdr, boolValue);
         rabbitTemplate.send("", LightingMqConstant.QUEUE_LIGHTING_SEND_1HG, new Message(JSONObject.toJSONString(msg).getBytes(), properties));
+        log.info("【1号馆】发送控制消息：{}", JSONObject.toJSONString(msg));
     }
 
     /**
