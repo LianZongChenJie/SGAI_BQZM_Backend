@@ -98,4 +98,10 @@ public class LightingDistrict {
      */
     @ApiModelProperty(value = "地图层级")
     private Integer mapLevel;
+
+    /**
+     * 下属区域空间编码集合（逗号分隔，如 1,2,3，关联 lighting_area.space）
+     */
+    @ApiModelProperty(value = "下属区域空间编码集合（逗号分隔，如 1,2,3）")
+    private String spaceIds;
 }

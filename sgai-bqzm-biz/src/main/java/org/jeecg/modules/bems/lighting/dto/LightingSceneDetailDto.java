@@ -53,6 +53,12 @@ public class LightingSceneDetailDto {
     private String status;
 
     /**
+     * 类别：节目类型、普通类型等（区分场景类别，如泛光节目/其他）
+     */
+    @ApiModelProperty(value = "类别：节目类型、普通类型等")
+    private String category;
+
+    /**
      * 泛光节目ID（场景按区域执行时若配置了节目ID则走泛光节目控制）
      */
     @ApiModelProperty(value = "泛光节目ID")
@@ -117,4 +123,10 @@ public class LightingSceneDetailDto {
      */
     @ApiModelProperty(value = "标签名称")
     private String tagName;
+
+    /**
+     * 节目类型场景ID集合（逗号分隔，关联 lighting_scene.id，即 category=节目 的场景）
+     */
+    @ApiModelProperty(value = "节目类型场景ID集合（逗号分隔，如 1,2,3）")
+    private String programSceneIds;
 }

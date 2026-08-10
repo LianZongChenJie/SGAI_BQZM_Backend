@@ -126,6 +126,70 @@ public class LightingAreaServiceImpl extends ServiceImpl<LightingAreaMapper, Lig
         return area;
     }
 
+    @Override
+    @Transactional
+    public boolean save(LightingArea entity) {
+        boolean ok = super.save(entity);
+        // 区域归属片区后，同步刷新片区的 spaceIds
+        if (ok && entity.getDistrictId() != null) {
+            refreshDistrictSpaceIds(entity.getDistrictId());
+        }
+        return ok;
+    }
+
+    @Override
+    @Transactional
+    public boolean updateById(LightingArea entity) {
+        LightingArea old = entity.getId() == null ? null : super.getById(entity.getId());
+        boolean ok = super.updateById(entity);
+        if (ok) {
+            // 片区归属变化或空间编码变化都会影响片区 spaceIds（按区域实际 space 推导）
+            boolean districtChanged = old != null && old.getDistrictId() != null
+                    && !old.getDistrictId().equals(entity.getDistrictId());
+            boolean spaceChanged = old != null && !Objects.equals(old.getSpace(), entity.getSpace());
+            if (districtChanged) {
+                // 旧片区刷新
+                refreshDistrictSpaceIds(old.getDistrictId());
+            }
+            if (entity.getDistrictId() != null && (districtChanged || spaceChanged)) {
+                // 新片区/所属片区刷新
+                refreshDistrictSpaceIds(entity.getDistrictId());
+            }
+        }
+        return ok;
+    }
+
+    @Override
+    @Transactional
+    public boolean removeById(java.io.Serializable id) {
+        LightingArea old = super.getById(id);
+        boolean ok = super.removeById(id);
+        // 删除区域后，同步刷新其原所属片区的 spaceIds
+        if (ok && old != null && old.getDistrictId() != null) {
+            refreshDistrictSpaceIds(old.getDistrictId());
+        }
+        return ok;
+    }
+
+    /**
+     * 根据 lighting_area 实际归属重新计算片区 spaceIds（逗号分隔的空间编码，去重）
+     */
+    private void refreshDistrictSpaceIds(Long districtId) {
+        if (districtId == null) {
+            return;
+        }
+        List<LightingArea> areas = super.list(new LambdaQueryWrapper<LightingArea>()
+                .eq(LightingArea::getDistrictId, districtId));
+        String spaceIds = areas.stream()
+                .map(LightingArea::getSpace)
+                .filter(StringUtils::isNotEmpty)
+                .distinct()
+                .collect(Collectors.joining(","));
+        districtService.update(new LambdaUpdateWrapper<LightingDistrict>()
+                .eq(LightingDistrict::getId, districtId)
+                .set(LightingDistrict::getSpaceIds, spaceIds));
+    }
+
     /**
      * 区域-全开
      * @param id 区域id

@@ -6,6 +6,7 @@ import com.baomidou.mybatisplus.annotation.TableId;
 import com.baomidou.mybatisplus.annotation.TableName;
 import com.fasterxml.jackson.databind.annotation.JsonSerialize;
 import com.fasterxml.jackson.databind.ser.std.ToStringSerializer;
+import io.swagger.annotations.ApiModelProperty;
 import lombok.Data;
 import lombok.EqualsAndHashCode;
 import org.jeecg.modules.bems.entity.BaseEntity;
@@ -13,6 +14,7 @@ import org.springframework.util.StringUtils;
 
 import java.time.LocalTime;
 import java.time.format.DateTimeFormatter;
+import java.util.List;
 
 /**
  * 照明计划
@@ -128,6 +130,26 @@ public class LightingPlan extends BaseEntity {
      */
     @TableField(exist = false)
     private String groupId;
+
+    /**
+     * 类别（非表字段，场景列表出参展示用：节目类型、普通类型等，照明计划本身无此字段）
+     */
+    @TableField(exist = false)
+    private String category;
+
+    /**
+     * 节目类型场景ID集合（非表字段，场景列表出参展示用：逗号分隔的 lighting_scene.id，照明计划本身无此字段）
+     */
+    @TableField(exist = false)
+    private String programSceneIds;
+
+    /**
+     * 当前正在运行的节目名称列表（非表字段，场景列表出参展示用）
+     * 查询泛光总控系统 get_group_run_state，只显示运行中/开启的节目名称
+     */
+    @TableField(exist = false)
+    @ApiModelProperty(value = "当前正在运行的节目名称列表")
+    private List<String> programDetail;
 
 
     public LocalTime getExecutionLocalTime(){

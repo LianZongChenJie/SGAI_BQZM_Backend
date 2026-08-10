@@ -36,6 +36,10 @@ public class LightingOperationLog {
      */
     public static final String LOG_TYPE_SCENE = "场景";
     /**
+     * 日志类型：节目
+     */
+    public static final String LOG_TYPE_PROGRAM = "节目";
+    /**
      * 日志类型：定时任务
      */
     public static final String LOG_TYPE_PLAN = "定时任务";

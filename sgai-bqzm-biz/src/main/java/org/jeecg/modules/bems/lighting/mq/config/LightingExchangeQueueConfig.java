@@ -120,6 +120,262 @@ public class LightingExchangeQueueConfig {
     }
 
     /**
+     * 北区（space=903）控制消息发送队列 - 13号网关
+     */
+    @Bean
+    public Queue lightingSendBq13(){
+        return new Queue(LightingMqConstant.QUEUE_LIGHTING_SEND_BQ_13,true);
+    }
+
+    /**
+     * 北区（space=903）控制消息发送队列 - 14号网关
+     */
+    @Bean
+    public Queue lightingSendBq14(){
+        return new Queue(LightingMqConstant.QUEUE_LIGHTING_SEND_BQ_14,true);
+    }
+
+    /**
+     * 北区（space=903）控制消息发送队列 - 15号网关
+     */
+    @Bean
+    public Queue lightingSendBq15(){
+        return new Queue(LightingMqConstant.QUEUE_LIGHTING_SEND_BQ_15,true);
+    }
+
+    /**
+     * 北区（space=903）控制消息发送队列 - 16号网关
+     */
+    @Bean
+    public Queue lightingSendBq16(){
+        return new Queue(LightingMqConstant.QUEUE_LIGHTING_SEND_BQ_16,true);
+    }
+
+    /**
+     * 北区（space=903）控制消息发送队列 - 17号网关
+     */
+    @Bean
+    public Queue lightingSendBq17(){
+        return new Queue(LightingMqConstant.QUEUE_LIGHTING_SEND_BQ_17,true);
+    }
+
+    /**
+     * 北区（space=903）控制消息发送队列 - 18号网关
+     */
+    @Bean
+    public Queue lightingSendBq18(){
+        return new Queue(LightingMqConstant.QUEUE_LIGHTING_SEND_BQ_18,true);
+    }
+
+    /**
+     * 北区（space=903）控制消息发送队列 - 19号网关
+     */
+    @Bean
+    public Queue lightingSendBq19(){
+        return new Queue(LightingMqConstant.QUEUE_LIGHTING_SEND_BQ_19,true);
+    }
+
+    /**
+     * 北区（space=903）控制消息发送队列 - 20号网关
+     */
+    @Bean
+    public Queue lightingSendBq20(){
+        return new Queue(LightingMqConstant.QUEUE_LIGHTING_SEND_BQ_20,true);
+    }
+
+    /**
+     * 北区（space=903）控制消息发送队列 - 21号网关
+     */
+    @Bean
+    public Queue lightingSendBq21(){
+        return new Queue(LightingMqConstant.QUEUE_LIGHTING_SEND_BQ_21,true);
+    }
+
+    /**
+     * 北区（space=903）控制消息发送队列 - 22号网关
+     */
+    @Bean
+    public Queue lightingSendBq22(){
+        return new Queue(LightingMqConstant.QUEUE_LIGHTING_SEND_BQ_22,true);
+    }
+
+    /**
+     * 北区（space=903）控制消息发送队列 - 23号网关
+     */
+    @Bean
+    public Queue lightingSendBq23(){
+        return new Queue(LightingMqConstant.QUEUE_LIGHTING_SEND_BQ_23,true);
+    }
+
+    /**
+     * 北区（space=903）控制消息发送队列 - 24号网关
+     */
+    @Bean
+    public Queue lightingSendBq24(){
+        return new Queue(LightingMqConstant.QUEUE_LIGHTING_SEND_BQ_24,true);
+    }
+
+    /**
+     * 北区（space=903）控制消息发送队列 - 25号网关
+     */
+    @Bean
+    public Queue lightingSendBq25(){
+        return new Queue(LightingMqConstant.QUEUE_LIGHTING_SEND_BQ_25,true);
+    }
+
+    /**
+     * 北区（space=903）控制消息发送队列 - 26号网关
+     */
+    @Bean
+    public Queue lightingSendBq26(){
+        return new Queue(LightingMqConstant.QUEUE_LIGHTING_SEND_BQ_26,true);
+    }
+
+    /**
+     * 北区（space=903）控制消息发送队列 - 27号网关
+     */
+    @Bean
+    public Queue lightingSendBq27(){
+        return new Queue(LightingMqConstant.QUEUE_LIGHTING_SEND_BQ_27,true);
+    }
+
+    /**
+     * 北区（space=903）控制消息发送队列 - 28号网关
+     */
+    @Bean
+    public Queue lightingSendBq28(){
+        return new Queue(LightingMqConstant.QUEUE_LIGHTING_SEND_BQ_28,true);
+    }
+
+    /**
+     * 北区（space=903）控制消息发送队列 - 29号网关
+     */
+    @Bean
+    public Queue lightingSendBq29(){
+        return new Queue(LightingMqConstant.QUEUE_LIGHTING_SEND_BQ_29,true);
+    }
+
+    /**
+     * 北区（space=903）控制消息发送队列 - 30号网关
+     */
+    @Bean
+    public Queue lightingSendBq30(){
+        return new Queue(LightingMqConstant.QUEUE_LIGHTING_SEND_BQ_30,true);
+    }
+
+    /**
+     * 北区（space=903）控制消息发送队列 - 31号网关
+     */
+    @Bean
+    public Queue lightingSendBq31(){
+        return new Queue(LightingMqConstant.QUEUE_LIGHTING_SEND_BQ_31,true);
+    }
+
+    /**
+     * 北区（space=903）控制消息发送队列 - 32号网关
+     */
+    @Bean
+    public Queue lightingSendBq32(){
+        return new Queue(LightingMqConstant.QUEUE_LIGHTING_SEND_BQ_32,true);
+    }
+
+    /**
+     * 北区（space=903）控制消息发送队列 - 33号网关
+     */
+    @Bean
+    public Queue lightingSendBq33(){
+        return new Queue(LightingMqConstant.QUEUE_LIGHTING_SEND_BQ_33,true);
+    }
+
+    /**
+     * 北区（space=903）控制消息发送队列 - 34号网关
+     */
+    @Bean
+    public Queue lightingSendBq34(){
+        return new Queue(LightingMqConstant.QUEUE_LIGHTING_SEND_BQ_34,true);
+    }
+
+    /**
+     * 北区（space=903）控制消息发送队列 - 35号网关
+     */
+    @Bean
+    public Queue lightingSendBq35(){
+        return new Queue(LightingMqConstant.QUEUE_LIGHTING_SEND_BQ_35,true);
+    }
+
+    /**
+     * 北区（space=903）控制消息发送队列 - 36号网关
+     */
+    @Bean
+    public Queue lightingSendBq36(){
+        return new Queue(LightingMqConstant.QUEUE_LIGHTING_SEND_BQ_36,true);
+    }
+
+    /**
+     * 北区（space=903）控制消息发送队列 - 37号网关
+     */
+    @Bean
+    public Queue lightingSendBq37(){
+        return new Queue(LightingMqConstant.QUEUE_LIGHTING_SEND_BQ_37,true);
+    }
+
+    /**
+     * 北区（space=903）控制消息发送队列 - 38号网关
+     */
+    @Bean
+    public Queue lightingSendBq38(){
+        return new Queue(LightingMqConstant.QUEUE_LIGHTING_SEND_BQ_38,true);
+    }
+
+    /**
+     * 北区（space=903）控制消息发送队列 - 39号网关
+     */
+    @Bean
+    public Queue lightingSendBq39(){
+        return new Queue(LightingMqConstant.QUEUE_LIGHTING_SEND_BQ_39,true);
+    }
+
+    /**
+     * 北区（space=903）控制消息发送队列 - 40号网关
+     */
+    @Bean
+    public Queue lightingSendBq40(){
+        return new Queue(LightingMqConstant.QUEUE_LIGHTING_SEND_BQ_40,true);
+    }
+
+    /**
+     * 北区（space=903）控制消息发送队列 - 41号网关
+     */
+    @Bean
+    public Queue lightingSendBq41(){
+        return new Queue(LightingMqConstant.QUEUE_LIGHTING_SEND_BQ_41,true);
+    }
+
+    /**
+     * 北区（space=903）控制消息发送队列 - 42号网关
+     */
+    @Bean
+    public Queue lightingSendBq42(){
+        return new Queue(LightingMqConstant.QUEUE_LIGHTING_SEND_BQ_42,true);
+    }
+
+    /**
+     * 北区（space=903）控制消息发送队列 - 43号网关
+     */
+    @Bean
+    public Queue lightingSendBq43(){
+        return new Queue(LightingMqConstant.QUEUE_LIGHTING_SEND_BQ_43,true);
+    }
+
+    /**
+     * 北区（space=903）控制消息发送队列 - 44号网关
+     */
+    @Bean
+    public Queue lightingSendBq44(){
+        return new Queue(LightingMqConstant.QUEUE_LIGHTING_SEND_BQ_44,true);
+    }
+
+    /**
      * 北区（space=903）状态反馈队列
      */
     @Bean

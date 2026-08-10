@@ -1,6 +1,7 @@
 package org.jeecg.modules.bems.lighting.service.impl;
 
 import cn.hutool.core.collection.CollectionUtil;
+import com.alibaba.fastjson.JSONObject;
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.baomidou.mybatisplus.core.metadata.IPage;
 import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
@@ -26,10 +27,12 @@ import org.jeecg.modules.bems.lighting.entity.LightingScene;
 import org.jeecg.modules.bems.lighting.entity.LightingSceneDetail;
 import org.jeecg.modules.bems.lighting.mapper.LightingSceneDetailMapper;
 import org.jeecg.modules.bems.lighting.mapper.LightingSceneMapper;
+import org.jeecg.modules.bems.lighting.mq.send.LightingSendService;
 import org.jeecg.modules.bems.lighting.service.ILightingAreaService;
 import org.jeecg.modules.bems.lighting.service.ILightingCircuitService;
 import org.jeecg.modules.bems.lighting.service.ILightingOperationLogService;
 import org.jeecg.modules.bems.lighting.service.ILightingSceneService;
+import org.jeecg.modules.bems.lighting.service.YelIotService;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -44,6 +47,7 @@ import java.util.ArrayList;
 import java.util.Collections;
 import java.util.Comparator;
 import java.util.Date;
+import java.util.HashMap;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
@@ -69,6 +73,10 @@ public class LightingSceneServiceImpl extends ServiceImpl<LightingSceneMapper, L
 
     private final ILightingOperationLogService lightingOperationLogService;
 
+    private final LightingSendService lightingSendService;
+
+    private final YelIotService yelIotService;
+
     @Override
     public IPage<LightingPlan> listPage(LightingSceneQueryDto params) {
         // 名称过滤兼容前端只换 URL：planName 与 sceneName 等价，取任一非空值
@@ -77,10 +85,12 @@ public class LightingSceneServiceImpl extends ServiceImpl<LightingSceneMapper, L
                 new LambdaQueryWrapper<LightingScene>()
                         .like(StringUtils.isNotEmpty(name), LightingScene::getSceneName, name)
                         .eq(StringUtils.isNotEmpty(params.getSceneType()), LightingScene::getSceneType, params.getSceneType())
+                        .eq(StringUtils.isNotEmpty(params.getCategory()), LightingScene::getCategory, params.getCategory())
                         .eq(StringUtils.isNotEmpty(params.getStatus()), LightingScene::getStatus, params.getStatus())
                         .eq(StringUtils.isNotEmpty(params.getGroupId()), LightingScene::getGroupId, params.getGroupId())
                         .eq(StringUtils.isNotEmpty(params.getTagId()), LightingScene::getTagId, params.getTagId())
                         .like(StringUtils.isNotEmpty(params.getTagName()), LightingScene::getTagName, params.getTagName())
+                        .like(StringUtils.isNotEmpty(params.getProgramSceneIds()), LightingScene::getProgramSceneIds, params.getProgramSceneIds())
                         .orderByAsc(LightingScene::getSort)
         );
         List<LightingScene> scenes = scenePage.getRecords();
@@ -98,8 +108,90 @@ public class LightingSceneServiceImpl extends ServiceImpl<LightingSceneMapper, L
         List<LightingPlan> records = scenes.stream()
                 .map(scene -> toPlan(scene, detailMap.getOrDefault(scene.getId(), new ArrayList<>())))
                 .collect(Collectors.toList());
+        // 回填当前正在运行的节目名称（查询泛光总控系统 get_group_run_state）
+        fillRunningProgramDetail(records);
         page.setRecords(records);
         return page;
+    }
+
+    /**
+     * 回填场景列表的节目运行详情：查询泛光总控系统当前正在运行的节目（get_group_run_state），
+     * 匹配每个场景自身 groupId 及引用的节目类型场景（programSceneIds）的 groupId，
+     * 把运行中（state=1）的节目名称写入 programDetail。
+     * 总控系统不可达/未配置 host 时返回空列表，不影响列表查询。
+     */
+    private void fillRunningProgramDetail(List<LightingPlan> records) {
+        if (CollectionUtil.isEmpty(records)) {
+            return;
+        }
+        // 1. 收集所有场景引用的节目类型场景ID
+        Set<Long> programSceneIds = new HashSet<>();
+        for (LightingPlan record : records) {
+            if (StringUtils.isNotEmpty(record.getProgramSceneIds())) {
+                for (String s : record.getProgramSceneIds().split(",")) {
+                    if (StringUtils.isBlank(s.trim())) {
+                        continue;
+                    }
+                    try {
+                        programSceneIds.add(Long.parseLong(s.trim()));
+                    } catch (NumberFormatException e) {
+                        log.warn("programSceneIds 包含非法ID，已忽略: {}", s);
+                    }
+                }
+            }
+        }
+        // 2. 加载引用的节目场景，拿到各自的泛光节目ID(groupId)
+        Map<Long, String> programIdToGroupId = new HashMap<>();
+        if (CollectionUtil.isNotEmpty(programSceneIds)) {
+            super.listByIds(programSceneIds).forEach(p -> {
+                if (StringUtils.isNotBlank(p.getGroupId())) {
+                    programIdToGroupId.put(p.getId(), p.getGroupId().trim());
+                }
+            });
+        }
+        // 3. 查询当前正在运行的节目（state=1），建立 groupId -> groupName 映射（运行状态id 带 yel_ 前缀，去掉）
+        Map<String, String> runningGroupName = new HashMap<>();
+        for (JSONObject running : yelIotService.getRunningGroups()) {
+            String id = running.getString("id");
+            if (StringUtils.isEmpty(id)) {
+                continue;
+            }
+            String groupId = id.startsWith("yel_") ? id.substring(4) : id;
+            String groupName = running.getString("groupName");
+            if (StringUtils.isNotEmpty(groupId) && StringUtils.isNotEmpty(groupName)) {
+                runningGroupName.putIfAbsent(groupId, groupName);
+            }
+        }
+        // 4. 每个场景：自身 groupId + 引用节目场景的 groupId，命中的运行节目名称写入 programDetail
+        for (LightingPlan record : records) {
+            Set<String> groupIds = new HashSet<>();
+            if (StringUtils.isNotBlank(record.getGroupId())) {
+                groupIds.add(record.getGroupId().trim());
+            }
+            if (StringUtils.isNotEmpty(record.getProgramSceneIds())) {
+                for (String s : record.getProgramSceneIds().split(",")) {
+                    if (StringUtils.isBlank(s.trim())) {
+                        continue;
+                    }
+                    try {
+                        String groupId = programIdToGroupId.get(Long.parseLong(s.trim()));
+                        if (StringUtils.isNotEmpty(groupId)) {
+                            groupIds.add(groupId);
+                        }
+                    } catch (NumberFormatException ignored) {
+                        // 已在步骤1告警，此处忽略
+                    }
+                }
+            }
+            List<String> names = new ArrayList<>();
+            for (String groupId : groupIds) {
+                String groupName = runningGroupName.get(groupId);
+                if (StringUtils.isNotEmpty(groupName) && !names.contains(groupName)) {
+                    names.add(groupName);
+                }
+            }
+            record.setProgramDetail(names);
+        }
     }
 
     @Override
@@ -110,10 +202,12 @@ public class LightingSceneServiceImpl extends ServiceImpl<LightingSceneMapper, L
         List<LightingScene> scenes = super.list(new LambdaQueryWrapper<LightingScene>()
                 .like(StringUtils.isNotEmpty(name), LightingScene::getSceneName, name)
                 .eq(StringUtils.isNotEmpty(params.getSceneType()), LightingScene::getSceneType, params.getSceneType())
+                .eq(StringUtils.isNotEmpty(params.getCategory()), LightingScene::getCategory, params.getCategory())
                 .eq(StringUtils.isNotEmpty(params.getStatus()), LightingScene::getStatus, params.getStatus())
                 .eq(StringUtils.isNotEmpty(params.getGroupId()), LightingScene::getGroupId, params.getGroupId())
                 .eq(StringUtils.isNotEmpty(params.getTagId()), LightingScene::getTagId, params.getTagId())
                 .like(StringUtils.isNotEmpty(params.getTagName()), LightingScene::getTagName, params.getTagName())
+                .like(StringUtils.isNotEmpty(params.getProgramSceneIds()), LightingScene::getProgramSceneIds, params.getProgramSceneIds())
                 .orderByAsc(LightingScene::getSort));
         List<LightingPlanExportDto> rows = new ArrayList<>();
         if (CollectionUtil.isNotEmpty(scenes)) {
@@ -140,9 +234,11 @@ public class LightingSceneServiceImpl extends ServiceImpl<LightingSceneMapper, L
         dto.setStatus(plan.getStatus());
         dto.setPlanType(plan.getPlanType());
         dto.setCycleType(plan.getCycleType());
+        dto.setCategory(plan.getCategory());
         dto.setTagId(plan.getTagId());
         dto.setTagName(plan.getTagName());
         dto.setGroupId(plan.getGroupId());
+        dto.setProgramSceneIds(plan.getProgramSceneIds());
         dto.setSort(plan.getSort());
         dto.setRemark(plan.getRemark());
         dto.setCreateBy(plan.getCreateBy());
@@ -184,12 +280,14 @@ public class LightingSceneServiceImpl extends ServiceImpl<LightingSceneMapper, L
         plan.setId(scene.getId());
         plan.setPlanName(scene.getSceneName());
         plan.setPlanType(scene.getSceneType());
+        plan.setCategory(scene.getCategory());
         plan.setStatus(scene.getStatus());
         plan.setSort(scene.getSort());
         plan.setRemark(scene.getRemark());
         plan.setGroupId(scene.getGroupId());
         plan.setTagId(scene.getTagId());
         plan.setTagName(scene.getTagName());
+        plan.setProgramSceneIds(scene.getProgramSceneIds());
         plan.setCreateBy(scene.getCreateBy());
         plan.setCreateTime(scene.getCreateTime());
         plan.setUpdateBy(scene.getUpdateBy());
@@ -218,12 +316,14 @@ public class LightingSceneServiceImpl extends ServiceImpl<LightingSceneMapper, L
         LightingScene scene = new LightingScene();
         scene.setSceneName(resolveSceneName(dto));
         scene.setSceneType(StringUtils.isEmpty(dto.getSceneType()) ? "普通场景" : dto.getSceneType());
+        scene.setCategory(dto.getCategory());
         scene.setStatus(LightingScene.STATUS_ENABLE);
         scene.setSort(dto.getSort() == null ? getMaxSort() + 1 : dto.getSort());
         scene.setRemark(dto.getRemark());
         scene.setGroupId(dto.getGroupId());
         scene.setTagId(dto.getTagId());
         scene.setTagName(dto.getTagName());
+        scene.setProgramSceneIds(dto.getProgramSceneIds());
         super.save(scene);
         saveDetails(scene.getId(), dto.getDetails());
     }
@@ -244,11 +344,13 @@ public class LightingSceneServiceImpl extends ServiceImpl<LightingSceneMapper, L
         scene.setId(dto.getId());
         scene.setSceneName(resolveSceneName(dto));
         scene.setSceneType(StringUtils.isEmpty(dto.getSceneType()) ? old.getSceneType() : dto.getSceneType());
+        scene.setCategory(dto.getCategory());
         scene.setSort(dto.getSort());
         scene.setRemark(dto.getRemark());
         scene.setGroupId(dto.getGroupId());
         scene.setTagId(dto.getTagId());
         scene.setTagName(dto.getTagName());
+        scene.setProgramSceneIds(dto.getProgramSceneIds());
         super.updateById(scene);
         // 先删后插明细
         detailMapper.delete(new LambdaQueryWrapper<LightingSceneDetail>().eq(LightingSceneDetail::getSceneId, dto.getId()));
@@ -261,6 +363,11 @@ public class LightingSceneServiceImpl extends ServiceImpl<LightingSceneMapper, L
         LightingScene scene = super.getById(id);
         if (scene == null) {
             throw new JeecgBootException("场景不存在");
+        }
+        // 类别为 一键开关、节目 的场景禁止删除
+        if (LightingScene.CATEGORY_ONE_CLICK_SWITCH.equals(scene.getCategory())
+                || LightingScene.CATEGORY_PROGRAM.equals(scene.getCategory())) {
+            throw new JeecgBootException("【" + scene.getCategory() + "】类别的场景不允许删除");
         }
         detailMapper.delete(new LambdaQueryWrapper<LightingSceneDetail>().eq(LightingSceneDetail::getSceneId, id));
         super.removeById(id);
@@ -287,9 +394,11 @@ public class LightingSceneServiceImpl extends ServiceImpl<LightingSceneMapper, L
         dto.setId(scene.getId());
         dto.setPlanName(scene.getSceneName());
         dto.setStatus(scene.getStatus());
+        dto.setCategory(scene.getCategory());
         dto.setGroupId(scene.getGroupId());
         dto.setTagId(scene.getTagId());
         dto.setTagName(scene.getTagName());
+        dto.setProgramSceneIds(scene.getProgramSceneIds());
         if (CollectionUtil.isNotEmpty(details)) {
             LightingSceneDetail first = details.get(0);
             dto.setRelType(first.getRelType());
@@ -391,13 +500,26 @@ public class LightingSceneServiceImpl extends ServiceImpl<LightingSceneMapper, L
                 new LambdaQueryWrapper<LightingSceneDetail>()
                         .eq(LightingSceneDetail::getSceneId, sceneId)
                         .orderByAsc(LightingSceneDetail::getSort));
-        if (CollectionUtil.isEmpty(details)) {
+        // 明细为空但引用了节目类型场景时也允许控制
+        if (CollectionUtil.isEmpty(details) && StringUtils.isEmpty(scene.getProgramSceneIds())) {
             throw new JeecgBootException("场景下没有控制目标，请先添加明细");
         }
 
         // 记录场景操作日志（父日志，操作类型=场景），子日志通过 parentId 自动继承
         LightingOperationLog sceneLog = buildSceneLog(scene, op, sceneId);
         lightingOperationLogService.save(sceneLog);
+
+        // 节目类型场景（配置了泛光节目ID groupId）：按 groupId 发 MQ 给小程序，不走区域/回路明细
+        if (StringUtils.isNotBlank(scene.getGroupId())) {
+            int onOff = LightingScene.OPERATION_TYPE_OPEN.equals(op) ? 1 : 2;
+            log.info("场景【{}】{} 控制：发送泛光节目MQ，groupId={}", scene.getSceneName(), op, scene.getGroupId());
+            lightingSendService.sendGroupOper(scene.getGroupId(), onOff, scene.getId(), scene.getSceneName());
+            // 记录节目控制日志（挂在父日志下）
+            lightingOperationLogService.save(buildProgramLog(scene, op, sceneLog.getId()));
+            // 仍执行其引用的节目类型场景
+            executeProgramScenes(scene.getProgramSceneIds(), op, sceneLog.getId(), 0);
+            return;
+        }
 
         log.info("场景【{}】{} 控制开始，目标数：{}", scene.getSceneName(), op, details.size());
         for (LightingSceneDetail detail : details) {
@@ -409,6 +531,83 @@ public class LightingSceneServiceImpl extends ServiceImpl<LightingSceneMapper, L
                 throw new JeecgBootException("场景明细 relType 必须为 区域 或 回路");
             }
         }
+        // 执行引用的节目类型场景（节目场景按 groupId 发泛光节目MQ，日志挂在父日志下）
+        executeProgramScenes(scene.getProgramSceneIds(), op, sceneLog.getId(), 0);
+    }
+
+    /**
+     * 执行场景引用的节目类型场景：programSceneIds 为 lighting_scene.id 集合（category=节目 的场景），
+     * 节目类型场景不查区域/回路明细，而是按 groupId（泛光节目ID）发送MQ给小程序控制（onOff：1开2关），
+     * 与 plan/control 里带 groupId 场景的处理方式一致。
+     * 支持嵌套（节目场景也可引用其他节目场景），用深度限制防止循环引用死循环。
+     */
+    private void executeProgramScenes(String programSceneIds, String op, Long parentLogId, int depth) {
+        if (StringUtils.isEmpty(programSceneIds)) {
+            return;
+        }
+        if (depth > 5) {
+            throw new JeecgBootException("节目场景嵌套层级过深，可能存在循环引用");
+        }
+        List<Long> programIds = new ArrayList<>();
+        for (String s : programSceneIds.split(",")) {
+            if (StringUtils.isBlank(s.trim())) {
+                continue;
+            }
+            try {
+                programIds.add(Long.parseLong(s.trim()));
+            } catch (NumberFormatException e) {
+                log.warn("programSceneIds 包含非法ID，已忽略: {}", s);
+            }
+        }
+        if (programIds.isEmpty()) {
+            return;
+        }
+        List<LightingScene> programs = super.listByIds(programIds);
+        if (programs.size() < programIds.size()) {
+            log.warn("节目场景引用 {} 个，实际找到 {} 个，缺失的ID已跳过", programIds.size(), programs.size());
+        }
+        for (LightingScene program : programs) {
+            // 节目类型场景按 groupId（泛光节目ID）发 MQ 给小程序，不走区域/回路明细
+            if (StringUtils.isNotBlank(program.getGroupId())) {
+                int onOff = LightingScene.OPERATION_TYPE_OPEN.equals(op) ? 1 : 2;
+                log.info("执行节目场景【{}】{}，发送泛光节目MQ：groupId={}", program.getSceneName(), op, program.getGroupId());
+                lightingSendService.sendGroupOper(program.getGroupId(), onOff, program.getId(), program.getSceneName());
+                // 记录节目控制日志（挂在父日志下）
+                lightingOperationLogService.save(buildProgramLog(program, op, parentLogId));
+            } else {
+                log.warn("节目场景【{}】未配置泛光节目ID(groupId)，跳过", program.getSceneName());
+            }
+            // 嵌套引用：节目场景也可引用其他节目场景
+            executeProgramScenes(program.getProgramSceneIds(), op, parentLogId, depth + 1);
+        }
+    }
+
+    /**
+     * 构建节目控制子日志（logType=节目、operatorType=场景、name=节目场景名、operationType=节目+开/关），
+     * 挂在场景控制父日志（parentId）下，与区域/回路子日志同一层级。
+     */
+    private LightingOperationLog buildProgramLog(LightingScene program, String op, Long parentLogId) {
+        LightingOperationLog programLog = new LightingOperationLog();
+        programLog.setLogType(LightingOperationLog.LOG_TYPE_PROGRAM);
+        programLog.setParentId(parentLogId);
+        programLog.setRelType("场景");
+        programLog.setRelId(program.getId());
+        programLog.setName(program.getSceneName());
+        programLog.setOperationTime(java.time.LocalDateTime.now());
+        programLog.setOperationType("节目" + op);
+        // 设置操作人
+        String operationBy = "照明计划";
+        try {
+            org.jeecg.common.system.vo.LoginUser sysUser = (org.jeecg.common.system.vo.LoginUser) org.apache.shiro.SecurityUtils.getSubject().getPrincipal();
+            if (sysUser != null) {
+                operationBy = sysUser.getUsername();
+            }
+        } catch (Exception e) {
+            // 异步场景中SecurityManager不可用，使用默认用户
+        }
+        programLog.setOperationBy(operationBy);
+        programLog.setOperatorType(LightingOperationLog.OPERATOR_TYPE_SCENE);
+        return programLog;
     }
 
     /**

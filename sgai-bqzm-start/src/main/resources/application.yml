@@ -32,3 +32,16 @@ mybatis-plus:
     db-config:
       id-type: auto
   type-handlers-package: org.jeecg.modules.bems.handler
+
+# 泛光总控系统 API 配置
+yel:
+  iot:
+    # 总控系统地址，格式：ip:port
+    host: 10.61.13.132/yel
+    # 登录账号
+    username: admin
+    # 登录密码
+    password: 123456
+    # mock 开关：true 时不调用真实接口，返回样例数据（本地看不到总控系统时用）；部署到服务器后改为 false 走真实接口
+    mock: true
+

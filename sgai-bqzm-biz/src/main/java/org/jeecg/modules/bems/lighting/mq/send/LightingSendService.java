@@ -175,11 +175,53 @@ public class LightingSendService {
     }
 
     /**
+     * 北区（space=903）网关编号 → 控制消息发送队列映射（11-44号网关）
+     */
+    private static final Map<String, String> BQ_CONTROL_QUEUE_MAP = new HashMap<>();
+    static {
+        BQ_CONTROL_QUEUE_MAP.put("11", LightingMqConstant.QUEUE_LIGHTING_SEND_BQ_11);
+        BQ_CONTROL_QUEUE_MAP.put("12", LightingMqConstant.QUEUE_LIGHTING_SEND_BQ_12);
+        BQ_CONTROL_QUEUE_MAP.put("13", LightingMqConstant.QUEUE_LIGHTING_SEND_BQ_13);
+        BQ_CONTROL_QUEUE_MAP.put("14", LightingMqConstant.QUEUE_LIGHTING_SEND_BQ_14);
+        BQ_CONTROL_QUEUE_MAP.put("15", LightingMqConstant.QUEUE_LIGHTING_SEND_BQ_15);
+        BQ_CONTROL_QUEUE_MAP.put("16", LightingMqConstant.QUEUE_LIGHTING_SEND_BQ_16);
+        BQ_CONTROL_QUEUE_MAP.put("17", LightingMqConstant.QUEUE_LIGHTING_SEND_BQ_17);
+        BQ_CONTROL_QUEUE_MAP.put("18", LightingMqConstant.QUEUE_LIGHTING_SEND_BQ_18);
+        BQ_CONTROL_QUEUE_MAP.put("19", LightingMqConstant.QUEUE_LIGHTING_SEND_BQ_19);
+        BQ_CONTROL_QUEUE_MAP.put("20", LightingMqConstant.QUEUE_LIGHTING_SEND_BQ_20);
+        BQ_CONTROL_QUEUE_MAP.put("21", LightingMqConstant.QUEUE_LIGHTING_SEND_BQ_21);
+        BQ_CONTROL_QUEUE_MAP.put("22", LightingMqConstant.QUEUE_LIGHTING_SEND_BQ_22);
+        BQ_CONTROL_QUEUE_MAP.put("23", LightingMqConstant.QUEUE_LIGHTING_SEND_BQ_23);
+        BQ_CONTROL_QUEUE_MAP.put("24", LightingMqConstant.QUEUE_LIGHTING_SEND_BQ_24);
+        BQ_CONTROL_QUEUE_MAP.put("25", LightingMqConstant.QUEUE_LIGHTING_SEND_BQ_25);
+        BQ_CONTROL_QUEUE_MAP.put("26", LightingMqConstant.QUEUE_LIGHTING_SEND_BQ_26);
+        BQ_CONTROL_QUEUE_MAP.put("27", LightingMqConstant.QUEUE_LIGHTING_SEND_BQ_27);
+        BQ_CONTROL_QUEUE_MAP.put("28", LightingMqConstant.QUEUE_LIGHTING_SEND_BQ_28);
+        BQ_CONTROL_QUEUE_MAP.put("29", LightingMqConstant.QUEUE_LIGHTING_SEND_BQ_29);
+        BQ_CONTROL_QUEUE_MAP.put("30", LightingMqConstant.QUEUE_LIGHTING_SEND_BQ_30);
+        BQ_CONTROL_QUEUE_MAP.put("31", LightingMqConstant.QUEUE_LIGHTING_SEND_BQ_31);
+        BQ_CONTROL_QUEUE_MAP.put("32", LightingMqConstant.QUEUE_LIGHTING_SEND_BQ_32);
+        BQ_CONTROL_QUEUE_MAP.put("33", LightingMqConstant.QUEUE_LIGHTING_SEND_BQ_33);
+        BQ_CONTROL_QUEUE_MAP.put("34", LightingMqConstant.QUEUE_LIGHTING_SEND_BQ_34);
+        BQ_CONTROL_QUEUE_MAP.put("35", LightingMqConstant.QUEUE_LIGHTING_SEND_BQ_35);
+        BQ_CONTROL_QUEUE_MAP.put("36", LightingMqConstant.QUEUE_LIGHTING_SEND_BQ_36);
+        BQ_CONTROL_QUEUE_MAP.put("37", LightingMqConstant.QUEUE_LIGHTING_SEND_BQ_37);
+        BQ_CONTROL_QUEUE_MAP.put("38", LightingMqConstant.QUEUE_LIGHTING_SEND_BQ_38);
+        BQ_CONTROL_QUEUE_MAP.put("39", LightingMqConstant.QUEUE_LIGHTING_SEND_BQ_39);
+        BQ_CONTROL_QUEUE_MAP.put("40", LightingMqConstant.QUEUE_LIGHTING_SEND_BQ_40);
+        BQ_CONTROL_QUEUE_MAP.put("41", LightingMqConstant.QUEUE_LIGHTING_SEND_BQ_41);
+        BQ_CONTROL_QUEUE_MAP.put("42", LightingMqConstant.QUEUE_LIGHTING_SEND_BQ_42);
+        BQ_CONTROL_QUEUE_MAP.put("43", LightingMqConstant.QUEUE_LIGHTING_SEND_BQ_43);
+        BQ_CONTROL_QUEUE_MAP.put("44", LightingMqConstant.QUEUE_LIGHTING_SEND_BQ_44);
+    }
+
+    /**
      * 发送北区（space=903）控制消息（通过MQ转发小程序发给181服务器）
      * 根据 circuit_code 前缀自动判断发到哪个队列：
      * 11-xxx → lighting_control_bq_11 队列，GatewayCode=11
-     * 12-xxx → lighting_control_bq_12 队列，GatewayCode=12
-     * @param circuitCode 回路编码（格式：11-20 或 12-20）
+     * ...
+     * 44-xxx → lighting_control_bq_44 队列，GatewayCode=44
+     * @param circuitCode 回路编码（格式：11-20 或 44-20）
      * @param value 值（100=开，0=关）
      */
     public void sendBqControl(String circuitCode, String value) {
@@ -192,13 +234,9 @@ public class LightingSendService {
         String gatewayCode = circuitCode.substring(0, dashIndex);
         String code = circuitCode.substring(dashIndex + 1);
 
-        // 确定队列
-        String queueName;
-        if ("11".equals(gatewayCode)) {
-            queueName = LightingMqConstant.QUEUE_LIGHTING_SEND_BQ_11;
-        } else if ("12".equals(gatewayCode)) {
-            queueName = LightingMqConstant.QUEUE_LIGHTING_SEND_BQ_12;
-        } else {
+        // 确定队列（11-44号网关）
+        String queueName = BQ_CONTROL_QUEUE_MAP.get(gatewayCode);
+        if (queueName == null) {
             log.error("【北区】未知的网关编号，无法发送：gatewayCode={}, circuitCode={}", gatewayCode, circuitCode);
             return;
         }

@@ -20,6 +20,8 @@ import org.jeecg.modules.bems.lighting.service.ILightingPlanService;
 import org.springframework.amqp.core.Message;
 import org.springframework.amqp.rabbit.annotation.RabbitListener;
 
+import java.time.LocalDateTime;
+import java.time.format.DateTimeFormatter;
 import java.util.List;
 
 @RabbitComponent(value = "LightingMsgListener")
@@ -144,7 +146,7 @@ public class LightingMsgListener {
     public void sgfStatusSyncListener(Message message){
         String body = new String(message.getBody());
         try {
-            log.info("【四高炉灯控】收到小程序同步电箱状态消息：{}", body);
+//            log.info("【四高炉灯控】收到小程序同步电箱状态消息：{}", body);
             List<PowerBoxData> powerBoxList = JSONObject.parseArray(body, PowerBoxData.class);
 
             if(powerBoxList == null || powerBoxList.isEmpty()){
@@ -171,8 +173,8 @@ public class LightingMsgListener {
                 areaService.updateById(area);
                 updateCount++;
 
-                log.info("【四高炉灯控】更新区域状态：area_code={}, areaName={}, status={}",
-                        box.getDeviceSn(), area.getAreaName(), box.getDevicestate());
+//                log.info("【四高炉灯控】更新区域状态：area_code={}, areaName={}, status={}",
+//                        box.getDeviceSn(), area.getAreaName(), box.getDevicestate());
             }
 
             log.info("【四高炉灯控】小程序同步电箱状态处理完成，共 {} 个电箱，更新 {} 个", powerBoxList.size(), updateCount);
@@ -204,6 +206,10 @@ public class LightingMsgListener {
      * 1号馆状态消息监听
      * 接收MQ转发小程序从181服务器转过来的状态消息，更新回路状态
      * 单独处理，不走老的KNX那套逻辑
+     *
+     * 消息格式：{"GatewayAdr":"10.22.133.31","KnxAdr":"2/2/1","value":"true","CollectionTime":"2026-08-08 19:34:34","Remark":null}
+     * 对应回路 circuit_code 格式：Type=IpTunneling;HostAddress=10.22.133.31-3.1.22-2/2/1（网关+设备地址+KNX地址）
+     * value：true/1/非0数字=开启，false/0=关闭
      */
     @RabbitListener(queues = LightingMqConstant.QUEUE_LIGHTING_LISTENER_1HG, ackMode = "AUTO")
     public void hg1StatusListener(Message message){
@@ -215,42 +221,55 @@ public class LightingMsgListener {
             String gatewayAdr = msg.getString("GatewayAdr");
             String knxAdr = msg.getString("KnxAdr");
             String value = msg.getString("value");
+            String collectionTime = msg.getString("CollectionTime");
 
             if(StringUtils.isEmpty(gatewayAdr) || StringUtils.isEmpty(knxAdr) || StringUtils.isEmpty(value)){
                 log.warn("【1号馆】状态消息参数不完整，跳过");
                 return;
             }
 
-            // 拼成 circuit_code：GatewayAdr + "-" + KnxAdr
-            String circuitCode = gatewayAdr + "-" + knxAdr;
+            // 1. 根据 GatewayAdr + KnxAdr 匹配回路
+            //    老格式：circuit_code = "10.22.133.31-2/2/1"（精确匹配）
+            //    新格式：circuit_code = "Type=IpTunneling;HostAddress=10.22.133.31-3.1.22-2/2/1"（模糊匹配）
+            LightingCircuit circuit = null;
 
-            // 根据 circuit_code 查询回路
-            LambdaQueryWrapper<LightingCircuit> wrapper = new LambdaQueryWrapper<>();
-            wrapper.eq(LightingCircuit::getCircuitCode, circuitCode);
-            LightingCircuit circuit = circuitService.getOne(wrapper);
+            LambdaQueryWrapper<LightingCircuit> exactWrapper = new LambdaQueryWrapper<>();
+            exactWrapper.eq(LightingCircuit::getCircuitCode, gatewayAdr + "-" + knxAdr);
+            circuit = circuitService.getOne(exactWrapper, false);
 
             if(circuit == null){
-                log.warn("【1号馆】未找到对应的回路，circuit_code={}", circuitCode);
+                LambdaQueryWrapper<LightingCircuit> likeWrapper = new LambdaQueryWrapper<>();
+                likeWrapper.like(LightingCircuit::getCircuitCode, "HostAddress=" + gatewayAdr + "-")
+                        .like(LightingCircuit::getCircuitCode, "-" + knxAdr);
+                List<LightingCircuit> circuitList = circuitService.list(likeWrapper);
+                if(circuitList != null && !circuitList.isEmpty()){
+                    circuit = circuitList.get(0);
+                    if(circuitList.size() > 1){
+                        log.warn("【1号馆】回路匹配到多条，取第一条：gatewayAdr={}, knxAdr={}, size={}", gatewayAdr, knxAdr, circuitList.size());
+                    }
+                }
+            }
+
+            if(circuit == null){
+                log.warn("【1号馆】未找到对应的回路，gatewayAdr={}, knxAdr={}", gatewayAdr, knxAdr);
                 return;
             }
 
-            // 判断状态，和老的KNX逻辑一致：0=关，1是 开
-            boolean isValidNumber = false;
-            String status = "";
-            try {
-                int numValue = Integer.parseInt(value);
-                if(numValue == 0){
-                    status = LightingCircuit.STATUS_OFF;
-                }else if(numValue == 1){
-                    status = LightingCircuit.STATUS_ON;
-                }
-            } catch (NumberFormatException e) {
-                isValidNumber = false;
-            }
+            // 2. 解析开关状态：true/1/非0数字=开启，false/0=关闭，无法识别返回 null
+            String status = parseOnOffStatus(value);
 
-            if(isValidNumber){
+            if(status != null){
                 // 更新回路状态
                 circuit.setStatus(status);
+                // 最后在线时间（CollectionTime）
+                if(StringUtils.isNotEmpty(collectionTime)){
+                    try {
+                        circuit.setLastOnlineTime(LocalDateTime.parse(collectionTime.trim(),
+                                DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss")));
+                    } catch (Exception e) {
+                        log.warn("【1号馆】CollectionTime 解析失败，忽略：{}", collectionTime);
+                    }
+                }
                 circuitService.updateById(circuit);
 
                 // 通过 area_id 查区域，拿到 space
@@ -263,16 +282,44 @@ public class LightingMsgListener {
                 // 发送离线延迟消息
                 sendService.sendLightingCircuitComstat(space, String.valueOf(circuit.getAreaId()), circuit.getCircuitCode());
 
-                log.info("【1号馆】更新回路状态：circuit_code={}, status={}", circuitCode, status);
+                log.info("【1号馆】更新回路状态：circuit_code={}, status={}", circuit.getCircuitCode(), status);
             }else{
                 // 状态异常，设置为离线
                 LightingArea area = areaService.getById(circuit.getAreaId());
                 String space = area != null ? area.getSpace() : "";
                 circuitService.updateComstat(space, String.valueOf(circuit.getAreaId()), circuit.getCircuitCode(), LightingCircuit.COMSTAT_OFFLINE);
-                log.warn("【1号馆】状态值异常，设置为离线：circuit_code={}, value={}", circuitCode, value);
+                log.warn("【1号馆】状态值异常，设置为离线：circuit_code={}, value={}", circuit.getCircuitCode(), value);
             }
         } catch (Exception e) {
             log.error("【1号馆】状态消息处理异常", e);
+        }
+    }
+
+    /**
+     * 开关状态值解析：true/1/非0数字=开启，false/0=关闭，无法识别返回 null
+     */
+    private String parseOnOffStatus(String value) {
+        if(StringUtils.isEmpty(value)){
+            return null;
+        }
+        String v = value.trim();
+        if("true".equalsIgnoreCase(v)){
+            return LightingCircuit.STATUS_ON;
+        }
+        if("false".equalsIgnoreCase(v)){
+            return LightingCircuit.STATUS_OFF;
+        }
+        try {
+            int numValue = Integer.parseInt(v);
+            if(numValue == 0){
+                return LightingCircuit.STATUS_OFF;
+            }
+            if(numValue > 0){
+                return LightingCircuit.STATUS_ON;
+            }
+            return null;
+        } catch (NumberFormatException e) {
+            return null;
         }
     }
 
@@ -288,7 +335,7 @@ public class LightingMsgListener {
     public void bqStatusListener(Message message){
         String body = new String(message.getBody());
         try {
-            log.info("【北区】收到状态消息：{}", body);
+//            log.info("【北区】收到状态消息：{}", body);
             JSONObject msg = JSONObject.parseObject(body);
 
             String gatewayCode = msg.getString("GatewayCode");
@@ -310,7 +357,7 @@ public class LightingMsgListener {
             LightingCircuit circuit = circuitService.getOne(wrapper);
 
             if(circuit == null){
-                log.warn("【北区】未找到对应的回路，circuit_code={}", fullCircuitCode);
+//                log.warn("【北区】未找到对应的回路，circuit_code={}", fullCircuitCode);
                 return;
             }
 
@@ -320,7 +367,7 @@ public class LightingMsgListener {
                     double current = Double.parseDouble(value.trim());
                     circuit.setElectricCurrent(current);
                     circuitService.updateById(circuit);
-                    log.info("【北区】更新回路电流：circuit_code={}, current={}A", fullCircuitCode, current);
+//                    log.info("【北区】更新回路电流：circuit_code={}, current={}A", fullCircuitCode, current);
                 } catch (NumberFormatException e) {
                     log.warn("【北区】电流值异常，未更新：circuit_code={}, value={}", fullCircuitCode, value);
                 }
@@ -357,7 +404,7 @@ public class LightingMsgListener {
                 // 发送离线延迟消息
                 sendService.sendLightingCircuitComstat(space, String.valueOf(circuit.getAreaId()), circuit.getCircuitCode());
 
-                log.info("【北区】更新回路状态：circuit_code={}, status={}", fullCircuitCode, status);
+//                log.info("【北区】更新回路状态：circuit_code={}, status={}", fullCircuitCode, status);
             }else{
                 // 状态异常，设置为离线
                 LightingArea area = areaService.getById(circuit.getAreaId());

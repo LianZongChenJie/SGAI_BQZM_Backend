@@ -36,6 +36,16 @@ public class LightingScene extends BaseEntity {
     public static final String STATUS_DISABLE = "禁用";
 
     /**
+     * 类别：一键开关（禁止删除）
+     */
+    public static final String CATEGORY_ONE_CLICK_SWITCH = "一键开关";
+
+    /**
+     * 类别：节目（禁止删除）
+     */
+    public static final String CATEGORY_PROGRAM = "节目";
+
+    /**
      * 主键（雪花ID，JSON 序列化为字符串避免前端精度丢失）
      */
     @TableId(type = IdType.ASSIGN_ID)
@@ -54,6 +64,12 @@ public class LightingScene extends BaseEntity {
      */
     @ApiModelProperty(value = "场景类型：普通场景、节日场景、应急场景")
     private String sceneType;
+
+    /**
+     * 类别：节目类型、普通类型等（区分场景类别，如泛光节目/其他）
+     */
+    @ApiModelProperty(value = "类别：节目类型、普通类型等")
+    private String category;
 
     /**
      * 状态：启用、禁用
@@ -91,6 +107,13 @@ public class LightingScene extends BaseEntity {
      */
     @ApiModelProperty(value = "标签名称")
     private String tagName;
+
+    /**
+     * 节目类型场景ID集合（逗号分隔，关联 lighting_scene.id，即 category=节目 的场景）
+     * 新建场景时可选择本表节目类型的场景，也可选择区域/回路信息
+     */
+    @ApiModelProperty(value = "节目类型场景ID集合（逗号分隔，如 1,2,3）")
+    private String programSceneIds;
 
     /**
      * 场景明细（非表字段）

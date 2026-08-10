@@ -60,6 +60,12 @@ public class LightingSceneDto {
     private String sceneType;
 
     /**
+     * 类别：节目类型、普通类型等（区分场景类别，如泛光节目/其他）
+     */
+    @ApiModelProperty(value = "类别：节目类型、普通类型等")
+    private String category;
+
+    /**
      * 备注
      */
     @ApiModelProperty(value = "备注")
@@ -88,6 +94,13 @@ public class LightingSceneDto {
      */
     @ApiModelProperty(value = "标签名称（可选，用于场景分组/筛选展示）")
     private String tagName;
+
+    /**
+     * 节目类型场景ID集合（逗号分隔，关联 lighting_scene.id，即 category=节目 的场景）
+     * 新建场景时可选择本表节目类型的场景，也可选择区域/回路信息
+     */
+    @ApiModelProperty(value = "节目类型场景ID集合（逗号分隔，如 1,2,3）")
+    private String programSceneIds;
 
     /**
      * 场景明细（格式2使用，与 relIds 二选一）

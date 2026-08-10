@@ -562,6 +562,8 @@ public class LightingPlanServiceImpl extends ServiceImpl<LightingPlanMapper, Lig
                     if(StringUtils.isNotBlank(scene.getGroupId())){
                         // 有泛光节目ID，发MQ给小程序调节目
                         lightingSendService.sendGroupOper(scene.getGroupId(), onOff, scene.getId(), scene.getSceneName());
+                        // 记录节目控制日志（挂在父日志下）
+                        buildProgramLog(scene.getSceneName(), scene.getId(), op, planLog.getId());
                         // 从普通列表里移除，不走原来的逻辑
                         normalIds.remove(scene.getId());
                     }
@@ -572,6 +574,13 @@ public class LightingPlanServiceImpl extends ServiceImpl<LightingPlanMapper, Lig
             if(!normalIds.isEmpty()){
                 executeArea(normalIds, op, planLog.getId());
             }
+
+            // 执行场景引用的节目类型场景（节目场景按 groupId 发泛光节目MQ，日志挂在父日志下）
+            if(CollectionUtil.isNotEmpty(sceneList)){
+                for(org.jeecg.modules.bems.lighting.entity.LightingScene scene : sceneList){
+                    executeProgramScenes(scene.getProgramSceneIds(), op, planLog.getId(), 0);
+                }
+            }
         }else if(LightingPlan.REL_TYPE_CIRCUIT.equals(relType)){
             // 回路批量开启/关闭
             executeCircuit(ids, op, planLog.getId());
@@ -581,6 +590,80 @@ public class LightingPlanServiceImpl extends ServiceImpl<LightingPlanMapper, Lig
         // relType=区域 时复用上面已查出的 sceneList，避免重复查询
         syncSceneOperationType(relType, ids, op, sceneId,
                 LightingPlan.REL_TYPE_AREA.equals(relType) ? sceneList : null);
+    }
+
+    /**
+     * 执行场景引用的节目类型场景：programSceneIds 为 lighting_scene.id 集合（category=节目 的场景），
+     * 节目类型场景不查区域/回路明细，而是按 groupId（泛光节目ID）发送MQ给小程序控制（onOff：1开2关），
+     * 与顶层带 groupId 场景的处理方式一致。
+     * 支持嵌套（节目场景也可引用其他节目场景），用深度限制防止循环引用死循环。
+     */
+    private void executeProgramScenes(String programSceneIds, String op, Long parentLogId, int depth) {
+        if(StringUtils.isEmpty(programSceneIds)){
+            return;
+        }
+        if(depth > 5){
+            throw new JeecgBootException("节目场景嵌套层级过深，可能存在循环引用");
+        }
+        Set<Long> programIds = new HashSet<>();
+        for(String s : programSceneIds.split(",")){
+            if(StringUtils.isBlank(s.trim())){
+                continue;
+            }
+            try{
+                programIds.add(Long.parseLong(s.trim()));
+            }catch (NumberFormatException e){
+                log.warn("programSceneIds 包含非法ID，已忽略: {}", s);
+            }
+        }
+        if(programIds.isEmpty()){
+            return;
+        }
+        List<org.jeecg.modules.bems.lighting.entity.LightingScene> programs = lightingSceneService.listByIds(programIds);
+        if(programs.size() < programIds.size()){
+            log.warn("节目场景引用 {} 个，实际找到 {} 个，缺失的ID已跳过", programIds.size(), programs.size());
+        }
+        for(org.jeecg.modules.bems.lighting.entity.LightingScene program : programs){
+            // 节目类型场景按 groupId（泛光节目ID）发 MQ 给小程序，不走区域/回路明细
+            if(StringUtils.isNotBlank(program.getGroupId())){
+                int onOff = LightingPlan.OPERATION_TYPE_OPEN.equals(op) ? 1 : 2;
+                log.info("执行节目场景【{}】{}，发送泛光节目MQ：groupId={}", program.getSceneName(), op, program.getGroupId());
+                lightingSendService.sendGroupOper(program.getGroupId(), onOff, program.getId(), program.getSceneName());
+                // 记录节目控制日志（挂在父日志下）
+                buildProgramLog(program.getSceneName(), program.getId(), op, parentLogId);
+            }else{
+                log.warn("节目场景【{}】未配置泛光节目ID(groupId)，跳过", program.getSceneName());
+            }
+            // 嵌套引用：节目场景也可引用其他节目场景
+            executeProgramScenes(program.getProgramSceneIds(), op, parentLogId, depth + 1);
+        }
+    }
+
+    /**
+     * 记录节目控制子日志（logType=节目、operatorType=场景、name=节目场景名、operationType=节目+开/关），
+     * 挂在场景控制父日志（parentId）下，与区域/回路子日志同一层级。
+     */
+    private void buildProgramLog(String sceneName, Long sceneId, String op, Long parentLogId) {
+        LightingOperationLog programLog = new LightingOperationLog();
+        programLog.setLogType(LightingOperationLog.LOG_TYPE_PROGRAM);
+        programLog.setParentId(parentLogId);
+        programLog.setRelType("场景");
+        programLog.setRelId(sceneId);
+        programLog.setName(sceneName);
+        programLog.setOperationTime(java.time.LocalDateTime.now());
+        programLog.setOperationType("节目" + op);
+        String operationBy = "照明计划";
+        try {
+            org.jeecg.common.system.vo.LoginUser sysUser = (org.jeecg.common.system.vo.LoginUser) org.apache.shiro.SecurityUtils.getSubject().getPrincipal();
+            if (sysUser != null) {
+                operationBy = sysUser.getUsername();
+            }
+        } catch (Exception e) {
+            // 异步场景中SecurityManager不可用，使用默认用户
+        }
+        programLog.setOperationBy(operationBy);
+        programLog.setOperatorType(LightingOperationLog.OPERATOR_TYPE_SCENE);
+        lightingOperationLogService.save(programLog);
     }
 
     /**

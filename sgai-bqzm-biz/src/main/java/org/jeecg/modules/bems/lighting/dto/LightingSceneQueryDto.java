@@ -24,6 +24,11 @@ public class LightingSceneQueryDto {
     private String sceneType;
 
     /**
+     * 类别：节目类型、普通类型等（精确匹配）
+     */
+    private String category;
+
+    /**
      * 状态：启用、禁用
      */
     private String status;
@@ -42,6 +47,11 @@ public class LightingSceneQueryDto {
      * 标签名称（模糊匹配）
      */
     private String tagName;
+
+    /**
+     * 节目类型场景ID集合（模糊匹配，如传某个节目场景ID查包含它的场景）
+     */
+    private String programSceneIds;
 
     private Integer pageNo = 1;
 
