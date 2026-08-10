@@ -8,7 +8,9 @@ import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
 import com.baomidou.mybatisplus.extension.service.impl.ServiceImpl;
 import lombok.AllArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.apache.shiro.SecurityUtils;
 import org.jeecg.common.exception.JeecgBootException;
+import org.jeecg.common.system.vo.LoginUser;
 import org.jeecg.modules.bems.lighting.dto.LightingCircuitQueryDto;
 import org.jeecg.modules.bems.lighting.entity.LightingCircuit;
 import org.jeecg.modules.bems.lighting.entity.LightingArea;
@@ -116,23 +118,8 @@ public class LightingCircuitServiceImpl extends ServiceImpl<CircuitMapper, Light
         if(circuit == null || status.equals(circuit.getStatus())){
             return;
         }
-        // 更新数据
-        circuit.setStatus(status);
-        if(status.equals("开启")){
-            circuit.setStartTime(LocalDateTime.now());
-            circuit.setClosingTime(null);
-        }else{
-            circuit.setClosingTime(LocalDateTime.now());
-            if(circuit.getStartTime() != null){
-                // 计算开启时长
-                long seconds = LocalDateTimeUtil.between(circuit.getStartTime(), circuit.getClosingTime()).getSeconds();
-                Long allDuration = circuit.getAllDuration();
-                if(allDuration == null){
-                    allDuration = 0L;
-                }
-                circuit.setAllDuration(allDuration + seconds);
-            }
-        }
+        // 更新数据（含开启/关闭时间、开启总时长，幂等累计）
+        applyStatusFields(circuit, status, LocalDateTime.now());
         super.updateById(circuit);
         // 更新场景开启时长
         areaService.update(new LambdaUpdateWrapper<LightingArea>()
@@ -140,6 +127,68 @@ public class LightingCircuitServiceImpl extends ServiceImpl<CircuitMapper, Light
                 .lt(LightingArea::getAllDuration,circuit.getAllDuration())
                 .set(LightingArea::getAllDuration,circuit.getAllDuration())
         );
+    }
+
+    /**
+     * 更新回路状态并维护开启/关闭时间、开启总时长
+     * 幂等规则：
+     * - 开启：仅当未记录开启时间或当前处于关闭状态时才刷新开启时间，避免周期状态上报刷新导致时长失真
+     * - 关闭：仅当当前未记录关闭时间（即本周期未结算过）时才累计时长，重复关闭消息不会重复累计
+     */
+    @Override
+    public void applyStatus(LightingCircuit circuit, String status) {
+        applyStatusFields(circuit, status, LocalDateTime.now());
+        super.updateById(circuit);
+    }
+
+    /**
+     * 根据开关状态维护回路的开启时间、关闭时间、开启总时长（不落库，由调用方保存）
+     */
+    private void applyStatusFields(LightingCircuit circuit, String status, LocalDateTime time) {
+        circuit.setStatus(status);
+        if (LightingCircuit.STATUS_ON.equals(status)) {
+            if (circuit.getStartTime() == null || circuit.getClosingTime() != null) {
+                circuit.setStartTime(time);
+            }
+            circuit.setClosingTime(null);
+        } else if (LightingCircuit.STATUS_OFF.equals(status)) {
+            if (circuit.getClosingTime() == null && circuit.getStartTime() != null) {
+                // 计算本周期开启时长并累计
+                long seconds = LocalDateTimeUtil.between(circuit.getStartTime(), time).getSeconds();
+                Long allDuration = circuit.getAllDuration();
+                if (allDuration == null) {
+                    allDuration = 0L;
+                }
+                circuit.setAllDuration(allDuration + seconds);
+            }
+            circuit.setClosingTime(time);
+        }
+    }
+
+    /**
+     * 控制指令发出后乐观更新回路的操作人、操作时间及开关时间
+     * （不直接改状态，状态以设备回传为准；重复关闭不重复累计时长）
+     */
+    private void updateControlInfo(LightingCircuit circuit, boolean type) {
+        applyStatusFields(circuit, type ? LightingCircuit.STATUS_ON : LightingCircuit.STATUS_OFF, LocalDateTime.now());
+        circuit.setOperatorBy(currentOperator());
+        circuit.setOperatorTime(LocalDateTime.now());
+        super.updateById(circuit);
+    }
+
+    /**
+     * 获取当前登录用户，异步/定时场景无登录上下文时使用默认值
+     */
+    private String currentOperator() {
+        try {
+            LoginUser sysUser = (LoginUser) SecurityUtils.getSubject().getPrincipal();
+            if (sysUser != null) {
+                return sysUser.getUsername();
+            }
+        } catch (Exception e) {
+            // 异步场景（如MQ监听器、定时任务）中SecurityManager不可用
+        }
+        return "照明计划";
     }
 
     /**
@@ -189,6 +238,8 @@ public class LightingCircuitServiceImpl extends ServiceImpl<CircuitMapper, Light
             service.circuitClose(area.getSpace(),area.getAreaCode(),data.getCircuitCode());
             lightingOperationLogService.saveLog(LightingOperationLog.LOG_TYPE_CIRCUIT, parentId, LightingOperationLog.REL_TYPE_CIRCUIT, id, area.getAreaName() + "-" + data.getCircuitName(), LocalDateTime.now(), "回路关闭");
         }
+        // 乐观更新操作人/操作时间及开关时间
+        updateControlInfo(data, type);
     }
 
     /**
@@ -212,6 +263,9 @@ public class LightingCircuitServiceImpl extends ServiceImpl<CircuitMapper, Light
                 LightingOperationLog.REL_TYPE_CIRCUIT, circuit.getId(),
                 area.getAreaName() + "-" + circuit.getCircuitName(),
                 LocalDateTime.now(), operName);
+
+        // 乐观更新操作人/操作时间及开关时间
+        updateControlInfo(circuit, type);
     }
 
     /**
@@ -235,5 +289,8 @@ public class LightingCircuitServiceImpl extends ServiceImpl<CircuitMapper, Light
                 LightingOperationLog.REL_TYPE_CIRCUIT, circuit.getId(),
                 area.getAreaName() + "-" + circuit.getCircuitName(),
                 LocalDateTime.now(), operName);
+
+        // 乐观更新操作人/操作时间及开关时间
+        updateControlInfo(circuit, type);
     }
 }

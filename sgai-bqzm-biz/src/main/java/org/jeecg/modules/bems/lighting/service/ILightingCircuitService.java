@@ -20,6 +20,11 @@ public interface ILightingCircuitService extends IService<LightingCircuit> {
     void mqControl(String space,String areaCode,String circuitCode, String status);
 
     /**
+     * 更新回路状态并维护开启/关闭时间、开启总时长（幂等：重复关闭不重复累计时长）
+     */
+    void applyStatus(LightingCircuit circuit, String status);
+
+    /**
      * 更新通讯状态
      */
     void updateComstat(String space,String areaCode,String circuitCode,String comstat);

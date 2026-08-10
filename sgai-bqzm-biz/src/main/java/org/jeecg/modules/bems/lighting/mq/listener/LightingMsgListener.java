@@ -259,8 +259,6 @@ public class LightingMsgListener {
             String status = parseOnOffStatus(value);
 
             if(status != null){
-                // 更新回路状态
-                circuit.setStatus(status);
                 // 最后在线时间（CollectionTime）
                 if(StringUtils.isNotEmpty(collectionTime)){
                     try {
@@ -270,7 +268,8 @@ public class LightingMsgListener {
                         log.warn("【1号馆】CollectionTime 解析失败，忽略：{}", collectionTime);
                     }
                 }
-                circuitService.updateById(circuit);
+                // 更新回路状态（同时维护开启/关闭时间、开启总时长）
+                circuitService.applyStatus(circuit, status);
 
                 // 通过 area_id 查区域，拿到 space
                 LightingArea area = areaService.getById(circuit.getAreaId());
@@ -390,9 +389,8 @@ public class LightingMsgListener {
             }
 
             if(isValidNumber){
-                // 更新回路状态
-                circuit.setStatus(status);
-                circuitService.updateById(circuit);
+                // 更新回路状态（同时维护开启/关闭时间、开启总时长）
+                circuitService.applyStatus(circuit, status);
 
                 // 通过 area_id 查区域，拿到 space
                 LightingArea area = areaService.getById(circuit.getAreaId());
