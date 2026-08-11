@@ -22,6 +22,7 @@ import org.jeecg.modules.bems.lighting.entity.LightingOperationLog;
 import org.jeecg.modules.bems.lighting.entity.LightingPlan;
 import org.jeecg.modules.bems.lighting.entity.LightingPlanExecuteLog;
 import org.jeecg.modules.bems.lighting.entity.LightingPlanExecutionTime;
+import org.jeecg.modules.bems.lighting.entity.LightingProgram;
 import org.jeecg.modules.bems.lighting.mapper.LightingPlanMapper;
 import org.jeecg.modules.bems.lighting.mapper.LightingSceneDetailMapper;
 import org.jeecg.modules.bems.lighting.mq.send.LightingSendService;
@@ -58,6 +59,8 @@ public class LightingPlanServiceImpl extends ServiceImpl<LightingPlanMapper, Lig
     private final ILightingPlanExecutionTimeService executionTimeService;
 
     private final ILightingSceneService lightingSceneService;
+
+    private final ILightingProgramService lightingProgramService;
 
     private final ILightingOperationLogService lightingOperationLogService;
 
@@ -258,8 +261,8 @@ public class LightingPlanServiceImpl extends ServiceImpl<LightingPlanMapper, Lig
 
         Set<Long> relIds = Arrays.stream(plan.getRelIds().split(",")).map(Long::parseLong).collect(Collectors.toSet());
         if(LightingPlan.REL_TYPE_AREA.equals(plan.getRelType())){
-            // 区域（场景）
-            executeArea(relIds, plan.getOperationType(), planLog.getId());
+            // 区域（场景）：含引用节目的场景，节目按 groupId 发泛光节目MQ
+            executeAreaWithPrograms(relIds, plan.getOperationType(), planLog.getId());
         }else if(LightingPlan.REL_TYPE_CIRCUIT.equals(plan.getRelType())){
             // 回路
             executeCircuit(relIds, plan.getOperationType(), planLog.getId());
@@ -332,6 +335,45 @@ public class LightingPlanServiceImpl extends ServiceImpl<LightingPlanMapper, Lig
                 lightingCircuitService.open(circuitId, parentId);
             }else if(LightingPlan.OPERATION_TYPE_CLOSE.equals(operationType)){
                 lightingCircuitService.close(circuitId, parentId);
+            }
+        }
+    }
+
+    /**
+     * 区域（场景）批量执行：与 control 保持一致——
+     * 1. relIds 中命中 lighting_scene 且引用了节目（programSceneIds）的场景，从区域控制中移除，节目改由 executeProgramScenes 按 groupId 发泛光节目MQ；
+     * 2. 其余目标（真实区域ID）走区域控制 executeArea。
+     * 供定时执行 execution()/手动立即执行 executionNow() 复用。
+     */
+    private void executeAreaWithPrograms(Collection<Long> areaIds, String operationType, Long parentId){
+        Set<Long> normalIds = new HashSet<>(areaIds); // 默认全部走区域控制
+        List<org.jeecg.modules.bems.lighting.entity.LightingScene> sceneList = lightingSceneService.listByIds(areaIds);
+        if(CollectionUtil.isNotEmpty(sceneList)){
+            for(org.jeecg.modules.bems.lighting.entity.LightingScene scene : sceneList){
+                if(StringUtils.isNotEmpty(scene.getProgramSceneIds())){
+                    // 引用了节目的场景：节目走 executeProgramScenes，不走区域控制
+                    normalIds.remove(scene.getId());
+                }
+            }
+        }
+        // relIds 直接传了节目ID（纯节目计划没有区域/回路明细，relIds 即引用的节目ID）→ 按节目执行
+        if(!normalIds.isEmpty()){
+            List<LightingProgram> directPrograms = lightingProgramService.listByIds(normalIds);
+            if(CollectionUtil.isNotEmpty(directPrograms)){
+                for(LightingProgram p : directPrograms){
+                    normalIds.remove(p.getId());
+                }
+                executeProgramList(directPrograms, operationType, parentId);
+            }
+        }
+        // 先执行真实区域目标
+        if(!normalIds.isEmpty()){
+            executeArea(normalIds, operationType, parentId);
+        }
+        // 再执行场景引用的节目（按 groupId 发泛光节目MQ，日志挂在父日志下）
+        if(CollectionUtil.isNotEmpty(sceneList)){
+            for(org.jeecg.modules.bems.lighting.entity.LightingScene scene : sceneList){
+                executeProgramScenes(scene.getProgramSceneIds(), operationType, parentId, 0);
             }
         }
     }
@@ -440,8 +482,8 @@ public class LightingPlanServiceImpl extends ServiceImpl<LightingPlanMapper, Lig
 
         Set<Long> relIds = Arrays.stream(plan.getRelIds().split(",")).map(Long::parseLong).collect(Collectors.toSet());
         if(LightingPlan.REL_TYPE_AREA.equals(plan.getRelType())){
-            // 区域（场景）
-            executeArea(relIds, plan.getOperationType(), planLog.getId());
+            // 区域（场景）：含引用节目的场景，节目按 groupId 发泛光节目MQ
+            executeAreaWithPrograms(relIds, plan.getOperationType(), planLog.getId());
         }else if(LightingPlan.REL_TYPE_CIRCUIT.equals(plan.getRelType())){
             // 回路
             executeCircuit(relIds, plan.getOperationType(), planLog.getId());
@@ -468,9 +510,9 @@ public class LightingPlanServiceImpl extends ServiceImpl<LightingPlanMapper, Lig
 
 
     @Override
-    public void control(String relType, String relIds, String operationType, Long sceneId) {
-        if(StringUtils.isEmpty(relIds)){
-            throw new JeecgBootException("relIds 不能为空");
+    public void control(String relType, String relIds, String operationType, Long sceneId, String programSceneIds) {
+        if(StringUtils.isEmpty(relIds) && StringUtils.isEmpty(programSceneIds)){
+            throw new JeecgBootException("relIds 与 programSceneIds 不能都为空");
         }
         // 操作类型兼容：开启/关闭 或 OPEN/CLOSE
         String op = operationType;
@@ -483,25 +525,27 @@ public class LightingPlanServiceImpl extends ServiceImpl<LightingPlanMapper, Lig
             throw new JeecgBootException("operationType 必须为 开启/关闭 或 OPEN/CLOSE");
         }
         Set<Long> ids = new HashSet<>();
-        for(String s : relIds.split(",")){
-            if(StringUtils.isBlank(s)){
-                continue;
+        if(StringUtils.isNotEmpty(relIds)){
+            for(String s : relIds.split(",")){
+                if(StringUtils.isBlank(s)){
+                    continue;
+                }
+                try{
+                    ids.add(Long.parseLong(s.trim()));
+                }catch (NumberFormatException e){
+                    throw new JeecgBootException("relIds 包含非法ID，无法解析: " + s);
+                }
             }
-            try{
-                ids.add(Long.parseLong(s.trim()));
-            }catch (NumberFormatException e){
-                throw new JeecgBootException("relIds 包含非法ID，无法解析: " + s);
+            if(ids.isEmpty()){
+                throw new JeecgBootException("relIds 不能为空");
             }
-        }
-        if(ids.isEmpty()){
-            throw new JeecgBootException("relIds 不能为空");
-        }
-        if(!LightingPlan.REL_TYPE_AREA.equals(relType) && !LightingPlan.REL_TYPE_CIRCUIT.equals(relType)){
-            throw new JeecgBootException("relType 必须为 区域 或 回路");
+            if(!LightingPlan.REL_TYPE_AREA.equals(relType) && !LightingPlan.REL_TYPE_CIRCUIT.equals(relType)){
+                throw new JeecgBootException("relType 必须为 区域 或 回路");
+            }
         }
         // relType=区域 时按场景查询列表（复用给日志场景名、泛光判断、状态同步，避免重复查询）
         List<org.jeecg.modules.bems.lighting.entity.LightingScene> sceneList = null;
-        if(LightingPlan.REL_TYPE_AREA.equals(relType)){
+        if(LightingPlan.REL_TYPE_AREA.equals(relType) && CollectionUtil.isNotEmpty(ids)){
             sceneList = lightingSceneService.listByIds(ids);
         }
         // 解析场景名称（优先 sceneId：先在 sceneList 里匹配，未命中再单查；其次 relType=区域 时 relIds 即场景ID）
@@ -531,7 +575,18 @@ public class LightingPlanServiceImpl extends ServiceImpl<LightingPlanMapper, Lig
         planLog.setLogType(LightingOperationLog.LOG_TYPE_SCENE);
         planLog.setParentId(null);
         planLog.setRelType(relType);
-        planLog.setRelId(sceneId != null ? sceneId : ids.iterator().next());
+        Long logRelId = sceneId;
+        if(logRelId == null && !ids.isEmpty()){
+            logRelId = ids.iterator().next();
+        }
+        if(logRelId == null && StringUtils.isNotEmpty(programSceneIds)){
+            try {
+                logRelId = Long.parseLong(programSceneIds.split(",")[0].trim());
+            } catch (Exception ignored) {
+                // 解析失败则日志不填 relId
+            }
+        }
+        planLog.setRelId(logRelId);
         planLog.setName(sceneName != null ? sceneName : "场景控制");
         planLog.setOperationTime(java.time.LocalDateTime.now());
         planLog.setOperationType("场景" + op);
@@ -552,30 +607,33 @@ public class LightingPlanServiceImpl extends ServiceImpl<LightingPlanMapper, Lig
             // 区域（场景）批量全开/全关
             // 先查询场景列表，判断是否有泛光节目ID（上面已查询，sceneList 复用）
 
-            // 操作类型转成泛光的 onOff：1开，2关
-            int onOff = LightingPlan.OPERATION_TYPE_OPEN.equals(op) ? 1 : 2;
-
-            // 有泛光节目ID的走MQ，没有的（包括查不到场景的）走原来的逻辑
+            // 引用了节目（programSceneIds，关联 lighting_program.id）的场景：节目由 executeProgramScenes 按 groupId 发泛光节目MQ，不走区域控制
             Set<Long> normalIds = new HashSet<>(ids); // 默认全部走原来的逻辑
             if(CollectionUtil.isNotEmpty(sceneList)){
                 for(org.jeecg.modules.bems.lighting.entity.LightingScene scene : sceneList){
-                    if(StringUtils.isNotBlank(scene.getGroupId())){
-                        // 有泛光节目ID，发MQ给小程序调节目
-                        lightingSendService.sendGroupOper(scene.getGroupId(), onOff, scene.getId(), scene.getSceneName());
-                        // 记录节目控制日志（挂在父日志下）
-                        buildProgramLog(scene.getSceneName(), scene.getId(), op, planLog.getId());
-                        // 从普通列表里移除，不走原来的逻辑
+                    if(StringUtils.isNotEmpty(scene.getProgramSceneIds())){
+                        // 从普通列表里移除，不走区域控制（节目走 executeProgramScenes）
                         normalIds.remove(scene.getId());
                     }
                 }
             }
 
-            // 走原来的逻辑
+            // relIds 直接传了节目ID（纯节目场景没有区域/回路明细，relIds 即引用的节目ID）→ 按节目执行
+            if(!normalIds.isEmpty()){
+                List<LightingProgram> directPrograms = lightingProgramService.listByIds(normalIds);
+                if(CollectionUtil.isNotEmpty(directPrograms)){
+                    for(LightingProgram p : directPrograms){
+                        normalIds.remove(p.getId());
+                    }
+                    executeProgramList(directPrograms, op, planLog.getId());
+                }
+            }
+            // 走原来的逻辑（剩余为真实区域ID）
             if(!normalIds.isEmpty()){
                 executeArea(normalIds, op, planLog.getId());
             }
 
-            // 执行场景引用的节目类型场景（节目场景按 groupId 发泛光节目MQ，日志挂在父日志下）
+            // 执行场景引用的节目（节目按 groupId 发泛光节目MQ，日志挂在父日志下）
             if(CollectionUtil.isNotEmpty(sceneList)){
                 for(org.jeecg.modules.bems.lighting.entity.LightingScene scene : sceneList){
                     executeProgramScenes(scene.getProgramSceneIds(), op, planLog.getId(), 0);
@@ -586,6 +644,11 @@ public class LightingPlanServiceImpl extends ServiceImpl<LightingPlanMapper, Lig
             executeCircuit(ids, op, planLog.getId());
         }
 
+        // 直接传 programSceneIds：只执行节目（无需 relType/relIds，按节目 groupId 发泛光节目MQ）
+        if(StringUtils.isNotEmpty(programSceneIds)){
+            executeProgramScenes(programSceneIds, op, planLog.getId(), 0);
+        }
+
         // 控制成功后，同步更新关联场景明细的操作类型（scene/listPage 的 operationType 显示开启/关闭）
         // relType=区域 时复用上面已查出的 sceneList，避免重复查询
         syncSceneOperationType(relType, ids, op, sceneId,
@@ -593,17 +656,35 @@ public class LightingPlanServiceImpl extends ServiceImpl<LightingPlanMapper, Lig
     }
 
     /**
-     * 执行场景引用的节目类型场景：programSceneIds 为 lighting_scene.id 集合（category=节目 的场景），
-     * 节目类型场景不查区域/回路明细，而是按 groupId（泛光节目ID）发送MQ给小程序控制（onOff：1开2关），
-     * 与顶层带 groupId 场景的处理方式一致。
-     * 支持嵌套（节目场景也可引用其他节目场景），用深度限制防止循环引用死循环。
+     * 按节目列表直接执行（relIds 直接传 lighting_program.id 的纯节目场景），
+     * 按 groupId（泛光节目ID）发送MQ给小程序控制（onOff：1开2关），日志挂在父日志下。
+     */
+    private void executeProgramList(List<LightingProgram> programs, String op, Long parentLogId) {
+        if(CollectionUtil.isEmpty(programs)){
+            return;
+        }
+        for(LightingProgram program : programs){
+            if(StringUtils.isNotBlank(program.getGroupId())){
+                int onOff = LightingPlan.OPERATION_TYPE_OPEN.equals(op) ? 1 : 2;
+                log.info("执行节目【{}】{}，发送泛光节目MQ：groupId={}", program.getProgramName(), op, program.getGroupId());
+                lightingSendService.sendGroupOper(program.getGroupId(), onOff, program.getId(), program.getProgramName());
+                buildProgramLog(program.getProgramName(), program.getId(), op, parentLogId);
+            }else{
+                log.warn("节目【{}】未配置泛光节目ID(groupId)，跳过", program.getProgramName());
+            }
+        }
+    }
+
+    /**
+     * 执行场景引用的节目：programSceneIds 为 lighting_program.id 集合（节目表），
+     * 节目不查区域/回路明细，而是按 groupId（泛光节目ID）发送MQ给小程序控制（onOff：1开2关）。
      */
     private void executeProgramScenes(String programSceneIds, String op, Long parentLogId, int depth) {
         if(StringUtils.isEmpty(programSceneIds)){
             return;
         }
         if(depth > 5){
-            throw new JeecgBootException("节目场景嵌套层级过深，可能存在循环引用");
+            throw new JeecgBootException("节目嵌套层级过深，可能存在循环引用");
         }
         Set<Long> programIds = new HashSet<>();
         for(String s : programSceneIds.split(",")){
@@ -619,28 +700,26 @@ public class LightingPlanServiceImpl extends ServiceImpl<LightingPlanMapper, Lig
         if(programIds.isEmpty()){
             return;
         }
-        List<org.jeecg.modules.bems.lighting.entity.LightingScene> programs = lightingSceneService.listByIds(programIds);
+        List<LightingProgram> programs = lightingProgramService.listByIds(programIds);
         if(programs.size() < programIds.size()){
-            log.warn("节目场景引用 {} 个，实际找到 {} 个，缺失的ID已跳过", programIds.size(), programs.size());
+            log.warn("场景引用节目 {} 个，实际找到 {} 个，缺失的ID已跳过", programIds.size(), programs.size());
         }
-        for(org.jeecg.modules.bems.lighting.entity.LightingScene program : programs){
-            // 节目类型场景按 groupId（泛光节目ID）发 MQ 给小程序，不走区域/回路明细
+        for(LightingProgram program : programs){
+            // 节目按 groupId（泛光节目ID）发 MQ 给小程序，不走区域/回路明细
             if(StringUtils.isNotBlank(program.getGroupId())){
                 int onOff = LightingPlan.OPERATION_TYPE_OPEN.equals(op) ? 1 : 2;
-                log.info("执行节目场景【{}】{}，发送泛光节目MQ：groupId={}", program.getSceneName(), op, program.getGroupId());
-                lightingSendService.sendGroupOper(program.getGroupId(), onOff, program.getId(), program.getSceneName());
+                log.info("执行节目【{}】{}，发送泛光节目MQ：groupId={}", program.getProgramName(), op, program.getGroupId());
+                lightingSendService.sendGroupOper(program.getGroupId(), onOff, program.getId(), program.getProgramName());
                 // 记录节目控制日志（挂在父日志下）
-                buildProgramLog(program.getSceneName(), program.getId(), op, parentLogId);
+                buildProgramLog(program.getProgramName(), program.getId(), op, parentLogId);
             }else{
-                log.warn("节目场景【{}】未配置泛光节目ID(groupId)，跳过", program.getSceneName());
+                log.warn("节目【{}】未配置泛光节目ID(groupId)，跳过", program.getProgramName());
             }
-            // 嵌套引用：节目场景也可引用其他节目场景
-            executeProgramScenes(program.getProgramSceneIds(), op, parentLogId, depth + 1);
         }
     }
 
     /**
-     * 记录节目控制子日志（logType=节目、operatorType=场景、name=节目场景名、operationType=节目+开/关），
+     * 记录节目控制子日志（logType=节目、operatorType=场景、name=节目名、operationType=节目+开/关），
      * 挂在场景控制父日志（parentId）下，与区域/回路子日志同一层级。
      */
     private void buildProgramLog(String sceneName, Long sceneId, String op, Long parentLogId) {
@@ -669,7 +748,7 @@ public class LightingPlanServiceImpl extends ServiceImpl<LightingPlanMapper, Lig
     /**
      * 控制成功后同步场景明细的操作类型：
      * 1. 前端传了 sceneId：只更新该场景（精准）；
-     * 2. 未传 sceneId 且 relType=区域 时，relIds 本身可能是场景ID（泛光节目场景），直接命中（复用已查询的 scenes）；
+     * 2. 未传 sceneId 且 relType=区域 时，relIds 本身可能是场景ID（引用了节目的场景），直接命中（复用已查询的 scenes）；
      * 3. 仍未命中则反查 lighting_scene_detail，把明细中包含这些控制目标（relType+relId）的场景全部更新。
      * 操作类型值：开启/关闭，保证 scene/listPage 返回的 operationType 与最后一次控制一致。
      * （lighting_scene.status 保持 启用/禁用 语义，不做开关状态）
@@ -682,7 +761,7 @@ public class LightingPlanServiceImpl extends ServiceImpl<LightingPlanMapper, Lig
             if(sceneId != null){
                 sceneIds.add(sceneId);
             }else{
-                // 2. relType=区域 时，relIds 可能本身就是场景ID（泛光节目场景），直接命中
+                // 2. relType=区域 时，relIds 可能本身就是场景ID（引用了节目的场景），直接命中
                 if(LightingPlan.REL_TYPE_AREA.equals(relType) && CollectionUtil.isNotEmpty(scenes)){
                     scenes.forEach(s -> sceneIds.add(s.getId()));
                 }

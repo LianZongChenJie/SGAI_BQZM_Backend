@@ -289,6 +289,7 @@ public class LightingAreaServiceImpl extends ServiceImpl<LightingAreaMapper, Lig
         return new LambdaQueryWrapper<LightingArea>()
                 .like(StringUtils.isNotEmpty(params.getRelName()), LightingArea::getRelName, params.getRelName())
                 .eq(StringUtils.isNotEmpty(params.getSpace()), LightingArea::getSpace, params.getSpace())
+                .like(StringUtils.isNotEmpty(params.getDeviceNo()), LightingArea::getDeviceNo, params.getDeviceNo())
                 .eq(params.getDistrictId() != null, LightingArea::getDistrictId, params.getDistrictId())
                 .like(StringUtils.isNotEmpty(params.getAreaName()), LightingArea::getAreaName, params.getAreaName())
                 .orderByAsc(LightingArea::getSort);

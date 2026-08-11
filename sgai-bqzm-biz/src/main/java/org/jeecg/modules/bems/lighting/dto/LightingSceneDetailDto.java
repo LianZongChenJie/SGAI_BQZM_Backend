@@ -59,9 +59,9 @@ public class LightingSceneDetailDto {
     private String category;
 
     /**
-     * 泛光节目ID（场景按区域执行时若配置了节目ID则走泛光节目控制）
+     * 泛光节目ID（展示用，取自场景引用的节目 lighting_program.group_id，多个节目逗号分隔）
      */
-    @ApiModelProperty(value = "泛光节目ID")
+    @ApiModelProperty(value = "泛光节目ID（取自引用的节目，多个逗号分隔）")
     private String groupId;
 
     /**
@@ -125,8 +125,14 @@ public class LightingSceneDetailDto {
     private String tagName;
 
     /**
-     * 节目类型场景ID集合（逗号分隔，关联 lighting_scene.id，即 category=节目 的场景）
+     * 节目ID集合（逗号分隔，关联 lighting_program.id）
      */
-    @ApiModelProperty(value = "节目类型场景ID集合（逗号分隔，如 1,2,3）")
+    @ApiModelProperty(value = "节目ID集合（逗号分隔，关联 lighting_program.id，如 1,2,3）")
     private String programSceneIds;
+
+    /**
+     * 引用的节目名称列表（取自引用的节目 lighting_program.program_name）
+     */
+    @ApiModelProperty(value = "引用的节目名称列表")
+    private List<String> programNames;
 }

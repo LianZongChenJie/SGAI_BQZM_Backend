@@ -90,13 +90,6 @@ public class LightingScene extends BaseEntity {
     private String remark;
 
     /**
-     * 泛光节目ID（关联泛光总控系统的节目）
-     * 有值时控制场景走泛光节目控制，无值走原来的回路控制
-     */
-    @ApiModelProperty(value = "泛光节目ID")
-    private String groupId;
-
-    /**
      * 标签ID（冗余存储，用于场景分组/筛选展示）
      */
     @ApiModelProperty(value = "标签ID")
@@ -109,10 +102,10 @@ public class LightingScene extends BaseEntity {
     private String tagName;
 
     /**
-     * 节目类型场景ID集合（逗号分隔，关联 lighting_scene.id，即 category=节目 的场景）
-     * 新建场景时可选择本表节目类型的场景，也可选择区域/回路信息
+     * 节目ID集合（逗号分隔，关联 lighting_program.id，即节目表的节目）
+     * 新建场景时可选择节目表的节目，也可选择区域/回路信息；控制时按节目 groupId 发泛光节目MQ
      */
-    @ApiModelProperty(value = "节目类型场景ID集合（逗号分隔，如 1,2,3）")
+    @ApiModelProperty(value = "节目ID集合（逗号分隔，关联 lighting_program.id，如 1,2,3）")
     private String programSceneIds;
 
     /**

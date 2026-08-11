@@ -34,11 +34,6 @@ public class LightingSceneQueryDto {
     private String status;
 
     /**
-     * 泛光节目ID（精确匹配）
-     */
-    private String groupId;
-
-    /**
      * 标签ID（精确匹配）
      */
     private String tagId;
@@ -49,7 +44,7 @@ public class LightingSceneQueryDto {
     private String tagName;
 
     /**
-     * 节目类型场景ID集合（模糊匹配，如传某个节目场景ID查包含它的场景）
+     * 节目ID集合（模糊匹配，如传某个节目ID查包含它的场景）
      */
     private String programSceneIds;
 

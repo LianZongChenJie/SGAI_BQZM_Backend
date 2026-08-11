@@ -16,6 +16,11 @@ public class LightingAreaQueryDto {
     private String space;
 
     /**
+     * 设备编号（F开头，模糊查询）
+     */
+    private String deviceNo;
+
+    /**
      * 所属片区ID
      */
     private Long districtId;

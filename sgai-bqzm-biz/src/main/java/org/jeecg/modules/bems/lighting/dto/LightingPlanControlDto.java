@@ -35,4 +35,11 @@ public class LightingPlanControlDto {
      */
     @ApiModelProperty(value = "场景ID（可选），控制后同步该场景开关状态")
     private Long sceneId;
+
+    /**
+     * 节目ID集合（可选，英文逗号分隔，关联 lighting_program.id）。
+     * 只传节目信息时（relType/relIds 可为空），按节目 groupId 发泛光节目MQ，仅执行节目。
+     */
+    @ApiModelProperty(value = "节目ID集合（可选），只传节目时仅执行节目")
+    private String programSceneIds;
 }

@@ -54,6 +54,12 @@ public class LightingArea {
     private String areaCode;
 
     /**
+     * 设备编号（F开头，对应总控设备号）
+     */
+    @ApiModelProperty(value = "设备编号（F开头）")
+    private String deviceNo;
+
+    /**
      * 状态：
      */
     @ApiModelProperty(value = "状态")

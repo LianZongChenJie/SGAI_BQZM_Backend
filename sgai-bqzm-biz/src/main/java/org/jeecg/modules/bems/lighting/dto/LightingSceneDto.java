@@ -78,12 +78,6 @@ public class LightingSceneDto {
     private Long sort;
 
     /**
-     * 泛光节目ID（可选，场景按区域执行时若配置了节目ID则走泛光节目控制）
-     */
-    @ApiModelProperty(value = "泛光节目ID（可选）")
-    private String groupId;
-
-    /**
      * 标签ID（可选，用于场景分组/筛选）
      */
     @ApiModelProperty(value = "标签ID（可选，用于场景分组/筛选）")
@@ -96,10 +90,10 @@ public class LightingSceneDto {
     private String tagName;
 
     /**
-     * 节目类型场景ID集合（逗号分隔，关联 lighting_scene.id，即 category=节目 的场景）
-     * 新建场景时可选择本表节目类型的场景，也可选择区域/回路信息
+     * 节目ID集合（逗号分隔，关联 lighting_program.id）
+     * 新建场景时可选择节目表的节目，也可选择区域/回路信息；控制时按节目 groupId 发泛光节目MQ
      */
-    @ApiModelProperty(value = "节目类型场景ID集合（逗号分隔，如 1,2,3）")
+    @ApiModelProperty(value = "节目ID集合（逗号分隔，关联 lighting_program.id，如 1,2,3）")
     private String programSceneIds;
 
     /**

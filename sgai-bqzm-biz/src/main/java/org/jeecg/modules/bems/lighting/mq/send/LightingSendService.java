@@ -13,6 +13,8 @@ import org.jeecg.modules.bems.lighting.mq.message.LightInfoUpdateLoad;
 import org.jeecg.modules.bems.lighting.service.ILightingPlanExecuteLogService;
 import org.springframework.amqp.core.Message;
 import org.springframework.amqp.core.MessageProperties;
+import org.springframework.amqp.core.Queue;
+import org.springframework.amqp.rabbit.core.RabbitAdmin;
 import org.springframework.amqp.rabbit.core.RabbitTemplate;
 import org.springframework.stereotype.Service;
 
@@ -21,6 +23,8 @@ import java.time.format.DateTimeFormatter;
 import java.time.temporal.ChronoUnit;
 import java.util.HashMap;
 import java.util.Map;
+import java.util.Set;
+import java.util.concurrent.ConcurrentHashMap;
 
 @Service
 @AllArgsConstructor
@@ -28,6 +32,8 @@ import java.util.Map;
 public class LightingSendService {
 
     private final RabbitTemplate rabbitTemplate;
+
+    private final RabbitAdmin rabbitAdmin;
 
     private final RedisUtil redisUtil;
     private final ProcessorMetrics processorMetrics;
@@ -175,52 +181,47 @@ public class LightingSendService {
     }
 
     /**
-     * 北区（space=903）网关编号 → 控制消息发送队列映射（11-44号网关）
+     * 已确认存在（或已自动创建）的北区控制队列缓存，避免每次发送都去 MQ 检查
      */
-    private static final Map<String, String> BQ_CONTROL_QUEUE_MAP = new HashMap<>();
-    static {
-        BQ_CONTROL_QUEUE_MAP.put("11", LightingMqConstant.QUEUE_LIGHTING_SEND_BQ_11);
-        BQ_CONTROL_QUEUE_MAP.put("12", LightingMqConstant.QUEUE_LIGHTING_SEND_BQ_12);
-        BQ_CONTROL_QUEUE_MAP.put("13", LightingMqConstant.QUEUE_LIGHTING_SEND_BQ_13);
-        BQ_CONTROL_QUEUE_MAP.put("14", LightingMqConstant.QUEUE_LIGHTING_SEND_BQ_14);
-        BQ_CONTROL_QUEUE_MAP.put("15", LightingMqConstant.QUEUE_LIGHTING_SEND_BQ_15);
-        BQ_CONTROL_QUEUE_MAP.put("16", LightingMqConstant.QUEUE_LIGHTING_SEND_BQ_16);
-        BQ_CONTROL_QUEUE_MAP.put("17", LightingMqConstant.QUEUE_LIGHTING_SEND_BQ_17);
-        BQ_CONTROL_QUEUE_MAP.put("18", LightingMqConstant.QUEUE_LIGHTING_SEND_BQ_18);
-        BQ_CONTROL_QUEUE_MAP.put("19", LightingMqConstant.QUEUE_LIGHTING_SEND_BQ_19);
-        BQ_CONTROL_QUEUE_MAP.put("20", LightingMqConstant.QUEUE_LIGHTING_SEND_BQ_20);
-        BQ_CONTROL_QUEUE_MAP.put("21", LightingMqConstant.QUEUE_LIGHTING_SEND_BQ_21);
-        BQ_CONTROL_QUEUE_MAP.put("22", LightingMqConstant.QUEUE_LIGHTING_SEND_BQ_22);
-        BQ_CONTROL_QUEUE_MAP.put("23", LightingMqConstant.QUEUE_LIGHTING_SEND_BQ_23);
-        BQ_CONTROL_QUEUE_MAP.put("24", LightingMqConstant.QUEUE_LIGHTING_SEND_BQ_24);
-        BQ_CONTROL_QUEUE_MAP.put("25", LightingMqConstant.QUEUE_LIGHTING_SEND_BQ_25);
-        BQ_CONTROL_QUEUE_MAP.put("26", LightingMqConstant.QUEUE_LIGHTING_SEND_BQ_26);
-        BQ_CONTROL_QUEUE_MAP.put("27", LightingMqConstant.QUEUE_LIGHTING_SEND_BQ_27);
-        BQ_CONTROL_QUEUE_MAP.put("28", LightingMqConstant.QUEUE_LIGHTING_SEND_BQ_28);
-        BQ_CONTROL_QUEUE_MAP.put("29", LightingMqConstant.QUEUE_LIGHTING_SEND_BQ_29);
-        BQ_CONTROL_QUEUE_MAP.put("30", LightingMqConstant.QUEUE_LIGHTING_SEND_BQ_30);
-        BQ_CONTROL_QUEUE_MAP.put("31", LightingMqConstant.QUEUE_LIGHTING_SEND_BQ_31);
-        BQ_CONTROL_QUEUE_MAP.put("32", LightingMqConstant.QUEUE_LIGHTING_SEND_BQ_32);
-        BQ_CONTROL_QUEUE_MAP.put("33", LightingMqConstant.QUEUE_LIGHTING_SEND_BQ_33);
-        BQ_CONTROL_QUEUE_MAP.put("34", LightingMqConstant.QUEUE_LIGHTING_SEND_BQ_34);
-        BQ_CONTROL_QUEUE_MAP.put("35", LightingMqConstant.QUEUE_LIGHTING_SEND_BQ_35);
-        BQ_CONTROL_QUEUE_MAP.put("36", LightingMqConstant.QUEUE_LIGHTING_SEND_BQ_36);
-        BQ_CONTROL_QUEUE_MAP.put("37", LightingMqConstant.QUEUE_LIGHTING_SEND_BQ_37);
-        BQ_CONTROL_QUEUE_MAP.put("38", LightingMqConstant.QUEUE_LIGHTING_SEND_BQ_38);
-        BQ_CONTROL_QUEUE_MAP.put("39", LightingMqConstant.QUEUE_LIGHTING_SEND_BQ_39);
-        BQ_CONTROL_QUEUE_MAP.put("40", LightingMqConstant.QUEUE_LIGHTING_SEND_BQ_40);
-        BQ_CONTROL_QUEUE_MAP.put("41", LightingMqConstant.QUEUE_LIGHTING_SEND_BQ_41);
-        BQ_CONTROL_QUEUE_MAP.put("42", LightingMqConstant.QUEUE_LIGHTING_SEND_BQ_42);
-        BQ_CONTROL_QUEUE_MAP.put("43", LightingMqConstant.QUEUE_LIGHTING_SEND_BQ_43);
-        BQ_CONTROL_QUEUE_MAP.put("44", LightingMqConstant.QUEUE_LIGHTING_SEND_BQ_44);
+    private static final Set<String> BQ_QUEUE_READY_CACHE = ConcurrentHashMap.newKeySet();
+
+    /**
+     * 获取北区控制队列名（前缀 + 网关编号），队列不存在时自动创建（幂等）
+     * @param gatewayCode 网关编号（纯数字）
+     * @return 队列名，检查/创建失败返回 null
+     */
+    private String getOrCreateBqQueue(String gatewayCode) {
+        String queueName = LightingMqConstant.QUEUE_LIGHTING_SEND_BQ_PREFIX + gatewayCode;
+        if (BQ_QUEUE_READY_CACHE.contains(queueName)) {
+            return queueName;
+        }
+        synchronized (BQ_QUEUE_READY_CACHE) {
+            if (BQ_QUEUE_READY_CACHE.contains(queueName)) {
+                return queueName;
+            }
+            try {
+                // 队列不存在才创建，已存在（属性一致）则跳过，避免重复声明
+                if (rabbitAdmin.getQueueInfo(queueName) == null) {
+                    String declared = rabbitAdmin.declareQueue(new Queue(queueName, true));
+                    if (declared == null) {
+                        log.error("【北区】自动创建队列失败：queue={}", queueName);
+                        return null;
+                    }
+                    log.info("【北区】自动创建控制队列：queue={}", queueName);
+                }
+                BQ_QUEUE_READY_CACHE.add(queueName);
+                return queueName;
+            } catch (Exception e) {
+                log.error("【北区】检查/创建队列失败：queue={}, error={}", queueName, e.getMessage(), e);
+                return null;
+            }
+        }
     }
 
     /**
      * 发送北区（space=903）控制消息（通过MQ转发小程序发给181服务器）
-     * 根据 circuit_code 前缀自动判断发到哪个队列：
-     * 11-xxx → lighting_control_bq_11 队列，GatewayCode=11
-     * ...
-     * 44-xxx → lighting_control_bq_44 队列，GatewayCode=44
+     * 队列名 = 公共前缀 + 网关编号（如 11-xxx → lighting_control_bq_11，44-xxx → lighting_control_bq_44），
+     * 不限制 11-44，任意网关编号都会拼出对应队列，队列不存在时自动创建
      * @param circuitCode 回路编码（格式：11-20 或 44-20）
      * @param value 值（100=开，0=关）
      */
@@ -234,10 +235,15 @@ public class LightingSendService {
         String gatewayCode = circuitCode.substring(0, dashIndex);
         String code = circuitCode.substring(dashIndex + 1);
 
-        // 确定队列（11-44号网关）
-        String queueName = BQ_CONTROL_QUEUE_MAP.get(gatewayCode);
+        // 网关编号必须是纯数字，防止拼出非法队列名
+        if (!gatewayCode.matches("\\d+")) {
+            log.error("【北区】网关编号格式不对，无法发送：gatewayCode={}, circuitCode={}", gatewayCode, circuitCode);
+            return;
+        }
+
+        // 队列名 = 前缀 + 网关编号，不存在时自动创建
+        String queueName = getOrCreateBqQueue(gatewayCode);
         if (queueName == null) {
-            log.error("【北区】未知的网关编号，无法发送：gatewayCode={}, circuitCode={}", gatewayCode, circuitCode);
             return;
         }
 

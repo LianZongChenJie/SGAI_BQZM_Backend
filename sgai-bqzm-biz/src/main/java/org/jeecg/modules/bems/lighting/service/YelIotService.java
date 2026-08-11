@@ -6,8 +6,8 @@ import com.alibaba.fastjson.JSONArray;
 import com.alibaba.fastjson.JSONObject;
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import lombok.extern.slf4j.Slf4j;
-import org.jeecg.modules.bems.lighting.entity.LightingScene;
-import org.jeecg.modules.bems.lighting.mapper.LightingSceneMapper;
+import org.jeecg.modules.bems.lighting.entity.LightingProgram;
+import org.jeecg.modules.bems.lighting.mapper.LightingProgramMapper;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 
@@ -45,10 +45,10 @@ public class YelIotService {
     @Value("${yel.iot.mock:false}")
     private boolean mockEnabled;
 
-    private final LightingSceneMapper sceneMapper;
+    private final LightingProgramMapper programMapper;
 
-    public YelIotService(LightingSceneMapper sceneMapper) {
-        this.sceneMapper = sceneMapper;
+    public YelIotService(LightingProgramMapper programMapper) {
+        this.programMapper = programMapper;
     }
 
     /**
@@ -169,21 +169,21 @@ public class YelIotService {
     }
 
     /**
-     * mock 样例数据：把 lighting_scene 里配置了泛光节目ID(groupId) 的节目场景当作"运行中"返回
-     * （id 拼接 yel_ 前缀、state=1、groupName 取场景名），保证前端在本地也能看到 programDetail 有值。
-     * 库里没有任何节目场景时，返回一条固定样例（对应接口文档示例）。
+     * mock 样例数据：把 lighting_program 里配置了泛光节目ID(groupId) 的节目当作"运行中"返回
+     * （id 拼接 yel_ 前缀、state=1、groupName 取节目名），保证前端在本地也能看到 programDetail 有值。
+     * 库里没有任何节目时，返回一条固定样例（对应接口文档示例）。
      */
     private List<JSONObject> buildMockRunningGroups() {
         List<JSONObject> result = new ArrayList<>();
         try {
-            List<LightingScene> programs = sceneMapper.selectList(
-                    new LambdaQueryWrapper<LightingScene>()
-                            .isNotNull(LightingScene::getGroupId)
-                            .ne(LightingScene::getGroupId, ""));
-            for (LightingScene p : programs) {
+            List<LightingProgram> programs = programMapper.selectList(
+                    new LambdaQueryWrapper<LightingProgram>()
+                            .isNotNull(LightingProgram::getGroupId)
+                            .ne(LightingProgram::getGroupId, ""));
+            for (LightingProgram p : programs) {
                 JSONObject o = new JSONObject();
                 o.put("id", "yel_" + p.getGroupId());
-                o.put("groupName", p.getSceneName());
+                o.put("groupName", p.getProgramName());
                 o.put("state", 1);
                 result.add(o);
             }

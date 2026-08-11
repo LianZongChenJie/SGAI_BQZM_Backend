@@ -77,6 +77,11 @@ public class LightingMqConstant {
     public static final String QUEUE_LIGHTING_LISTENER_1HG = "Lighting";
 
     /**
+     * 北区（space=903）控制消息发送队列前缀，实际队列名 = 前缀 + 网关编号（如 lighting_control_bq_11）
+     */
+    public static final String QUEUE_LIGHTING_SEND_BQ_PREFIX = "lighting_control_bq_";
+
+    /**
      * 北区（space=903）控制消息发送队列 - 11号网关
      */
     public static final String QUEUE_LIGHTING_SEND_BQ_11 = "lighting_control_bq_11";

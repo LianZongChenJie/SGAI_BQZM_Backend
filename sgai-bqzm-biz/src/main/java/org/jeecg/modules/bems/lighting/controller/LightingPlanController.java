@@ -122,7 +122,7 @@ public class LightingPlanController {
     @ApiOperation("批量控制灯光（全开/全关）")
     @PostMapping("/control")
     public Result<String> control(@RequestBody LightingPlanControlDto dto){
-        service.control(dto.getRelType(), dto.getRelIds(), dto.getOperationType(), dto.getSceneId());
+        service.control(dto.getRelType(), dto.getRelIds(), dto.getOperationType(), dto.getSceneId(), dto.getProgramSceneIds());
         return Result.ok();
     }
 }

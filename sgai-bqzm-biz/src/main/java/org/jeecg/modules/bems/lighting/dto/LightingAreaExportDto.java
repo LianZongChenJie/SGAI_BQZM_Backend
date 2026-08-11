@@ -15,6 +15,9 @@ public class LightingAreaExportDto {
     @Excel(name = "区域编码", width = 20, orderNum = "2")
     private String areaCode;
 
+    @Excel(name = "设备编号", width = 15, orderNum = "3")
+    private String deviceNo;
+
     @Excel(name = "空间名称", width = 15, orderNum = "3")
     private String spaceName;
 

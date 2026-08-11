@@ -126,7 +126,8 @@ public class LightingPlan extends BaseEntity {
     private String tagName;
 
     /**
-     * 泛光节目ID（非表字段，场景列表出参展示用，照明计划本身无此字段）
+     * 泛光节目ID（非表字段。场景本身没有 groupId，groupId 只属于节目 lighting_program.group_id；
+     * 此字段保留仅为兼容出参结构，恒为 null，需要节目ID请通过 programSceneIds 查节目表）
      */
     @TableField(exist = false)
     private String groupId;
@@ -138,7 +139,7 @@ public class LightingPlan extends BaseEntity {
     private String category;
 
     /**
-     * 节目类型场景ID集合（非表字段，场景列表出参展示用：逗号分隔的 lighting_scene.id，照明计划本身无此字段）
+     * 节目ID集合（非表字段，场景列表出参展示用：逗号分隔的 lighting_program.id，照明计划本身无此字段）
      */
     @TableField(exist = false)
     private String programSceneIds;
@@ -150,6 +151,13 @@ public class LightingPlan extends BaseEntity {
     @TableField(exist = false)
     @ApiModelProperty(value = "当前正在运行的节目名称列表")
     private List<String> programDetail;
+
+    /**
+     * 引用的节目名称列表（非表字段，场景列表出参展示用：取自引用的节目 lighting_program.program_name）
+     */
+    @TableField(exist = false)
+    @ApiModelProperty(value = "引用的节目名称列表")
+    private List<String> programNames;
 
 
     public LocalTime getExecutionLocalTime(){

@@ -59,5 +59,5 @@ public interface ILightingPlanService extends IService<LightingPlan> {
      * @param operationType 操作类型：开启、关闭（兼容 OPEN/CLOSE）
      * @param sceneId 场景ID（可选），指定后只同步该场景状态；为空时自动反查包含这些目标的场景
      */
-    void control(String relType, String relIds, String operationType, Long sceneId);
+    void control(String relType, String relIds, String operationType, Long sceneId, String programSceneIds);
 }
