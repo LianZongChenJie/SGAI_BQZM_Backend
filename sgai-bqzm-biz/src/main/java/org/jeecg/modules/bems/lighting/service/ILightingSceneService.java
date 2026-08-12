@@ -66,4 +66,12 @@ public interface ILightingSceneService extends IService<LightingScene> {
      * @param spaceId 空间id（lighting_area.space）
      */
     LightingSpaceScenesVo getBySpace(String spaceId);
+
+    /**
+     * 按区域查询场景（出参为 LightingPlan 结构，与 listPage 一致，含关联节目名称/运行中节目）
+     * 归属规则：场景明细包含该区域（relType=区域 且 relId=areaId），或包含该区域下的回路
+     *
+     * @param areaId 区域id（lighting_area.id）
+     */
+    java.util.List<LightingPlan> listByArea(Long areaId);
 }

@@ -39,4 +39,13 @@ public interface ILightingProgramService extends IService<LightingProgram> {
      * @param operationType 开启/关闭 或 OPEN/CLOSE
      */
     void control(Long programId, String operationType);
+
+    /**
+     * 节目全开/全关：批量控制全部（或指定空间）启用状态的节目，按 groupId 逐个发泛光节目MQ，自动记录控制日志
+     *
+     * @param operationType 开启/关闭 或 OPEN/CLOSE
+     * @param space         空间编码（可选，不传控制全部启用节目）
+     * @return 实际下发的节目数
+     */
+    int allControl(String operationType, String space);
 }

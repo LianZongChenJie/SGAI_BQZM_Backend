@@ -2,6 +2,7 @@ package org.jeecg.modules.bems.lighting.mq.send;
 
 import cn.hutool.core.date.LocalDateTimeUtil;
 import com.alibaba.fastjson.JSONObject;
+import com.rabbitmq.client.GetResponse;
 import io.micrometer.core.instrument.binder.system.ProcessorMetrics;
 import lombok.AllArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -21,10 +22,14 @@ import org.springframework.stereotype.Service;
 import java.time.LocalDateTime;
 import java.time.format.DateTimeFormatter;
 import java.time.temporal.ChronoUnit;
+import java.util.ArrayList;
 import java.util.HashMap;
+import java.util.List;
 import java.util.Map;
 import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.atomic.AtomicInteger;
+import java.util.function.Predicate;
 
 @Service
 @AllArgsConstructor
@@ -47,22 +52,33 @@ public class LightingSendService {
             log.error("发送消息失败,无法区分区域：{}", msg);
             return;
         }
+        String queueName = resolveOldSpaceQueue(gatewayCode);
+        if (queueName == null) {
+            log.error("发送消息失败,无法区分区域：{}", msg);
+            return;
+        }
+        // 队列不存在时自动创建（持久化、幂等），防止消息静默丢失
+        if (getOrCreateQueue(queueName) == null) {
+            return;
+        }
+        rabbitTemplate.convertAndSend("", queueName, msg);
+    }
+
+    /**
+     * 老空间（金安桥/一高炉/039/大跳台）区域控制队列（与 LightingAreaServiceImpl.resolveSpaceQueue 保持一致）
+     */
+    private String resolveOldSpaceQueue(String gatewayCode) {
         switch (gatewayCode) {
             case "1":
-                rabbitTemplate.convertAndSend("", LightingMqConstant.QUEUE_LIGHTING_SEND, msg);
-                break;
+                return LightingMqConstant.QUEUE_LIGHTING_SEND;      // 金安桥
             case "2":
-                rabbitTemplate.convertAndSend("", LightingMqConstant.QUEUE_LIGHTING_SEND_YGL, msg);
-                break;
-            case "4":
-                rabbitTemplate.convertAndSend("",LightingMqConstant.QUEUE_LIGHTING_SEND_DTT,msg);
-                break;
+                return LightingMqConstant.QUEUE_LIGHTING_SEND_YGL;  // 一高炉
             case "3":
-                rabbitTemplate.convertAndSend("",LightingMqConstant.QUEUE_LIGHTING_SEND_039,msg);
-                break;
+                return LightingMqConstant.QUEUE_LIGHTING_SEND_039;  // 039
+            case "4":
+                return LightingMqConstant.QUEUE_LIGHTING_SEND_DTT;  // 大跳台
             default:
-                log.error("发送消息失败,无法区分区域：{}", msg);
-                break;
+                return null;
         }
     }
 
@@ -140,6 +156,22 @@ public class LightingSendService {
     }
 
     /**
+     * 发送四高炉电箱控制消息（到电箱控制小程序）
+     * 四高炉区域（space=901）的 area_code 即电箱设备编号 deviceSn，如 yel_power_sg06
+     * @param deviceSn 电箱设备编号（= lighting_area.area_code）
+     * @param onOff 操作：1=开，0=关
+     */
+    public void sendSgfControl(String deviceSn, String onOff) {
+        Map<String, Object> msg = new HashMap<>();
+        msg.put("deviceSn", deviceSn);
+        msg.put("onOff", onOff);
+        MessageProperties properties = new MessageProperties();
+        properties.setContentType(MessageProperties.CONTENT_TYPE_JSON);
+        log.info("【四高炉】发送电箱控制消息：deviceSn={}, onOff={}", deviceSn, onOff);
+        rabbitTemplate.send("", LightingMqConstant.QUEUE_ELECTRIC_BOX_OPERATION, new Message(JSONObject.toJSONString(msg).getBytes(), properties));
+    }
+
+    /**
      * 发送1号馆控制消息（通过MQ转发小程序发给181服务器）
      * @param circuitCode 完整的回路编码（格式：Type=IpTunneling;HostAddress=10.22.133.32-4.1.25-3/7/18）
      * @param value 值（100=开，0=关，内部自动转成true/false）
@@ -181,22 +213,21 @@ public class LightingSendService {
     }
 
     /**
-     * 已确认存在（或已自动创建）的北区控制队列缓存，避免每次发送都去 MQ 检查
+     * 已确认存在（或已自动创建）的队列缓存，避免每次发送都去 MQ 检查
      */
-    private static final Set<String> BQ_QUEUE_READY_CACHE = ConcurrentHashMap.newKeySet();
+    private static final Set<String> QUEUE_READY_CACHE = ConcurrentHashMap.newKeySet();
 
     /**
-     * 获取北区控制队列名（前缀 + 网关编号），队列不存在时自动创建（幂等）
-     * @param gatewayCode 网关编号（纯数字）
+     * 获取队列名，队列不存在时自动创建（持久化、幂等）
+     * @param queueName 队列名
      * @return 队列名，检查/创建失败返回 null
      */
-    private String getOrCreateBqQueue(String gatewayCode) {
-        String queueName = LightingMqConstant.QUEUE_LIGHTING_SEND_BQ_PREFIX + gatewayCode;
-        if (BQ_QUEUE_READY_CACHE.contains(queueName)) {
+    private String getOrCreateQueue(String queueName) {
+        if (QUEUE_READY_CACHE.contains(queueName)) {
             return queueName;
         }
-        synchronized (BQ_QUEUE_READY_CACHE) {
-            if (BQ_QUEUE_READY_CACHE.contains(queueName)) {
+        synchronized (QUEUE_READY_CACHE) {
+            if (QUEUE_READY_CACHE.contains(queueName)) {
                 return queueName;
             }
             try {
@@ -204,15 +235,15 @@ public class LightingSendService {
                 if (rabbitAdmin.getQueueInfo(queueName) == null) {
                     String declared = rabbitAdmin.declareQueue(new Queue(queueName, true));
                     if (declared == null) {
-                        log.error("【北区】自动创建队列失败：queue={}", queueName);
+                        log.error("【MQ】自动创建队列失败：queue={}", queueName);
                         return null;
                     }
-                    log.info("【北区】自动创建控制队列：queue={}", queueName);
+                    log.info("【MQ】自动创建控制队列：queue={}", queueName);
                 }
-                BQ_QUEUE_READY_CACHE.add(queueName);
+                QUEUE_READY_CACHE.add(queueName);
                 return queueName;
             } catch (Exception e) {
-                log.error("【北区】检查/创建队列失败：queue={}, error={}", queueName, e.getMessage(), e);
+                log.error("【MQ】检查/创建队列失败：queue={}, error={}", queueName, e.getMessage(), e);
                 return null;
             }
         }
@@ -242,7 +273,7 @@ public class LightingSendService {
         }
 
         // 队列名 = 前缀 + 网关编号，不存在时自动创建
-        String queueName = getOrCreateBqQueue(gatewayCode);
+        String queueName = getOrCreateQueue(LightingMqConstant.QUEUE_LIGHTING_SEND_BQ_PREFIX + gatewayCode);
         if (queueName == null) {
             return;
         }
@@ -259,6 +290,193 @@ public class LightingSendService {
         log.info("【北区】发送控制消息：queue={}, gatewayCode={}, circuitCode={}, value={}", queueName, gatewayCode, code, value);
         log.info("【北区】发送控制消息：{}", JSONObject.toJSONString(msg));
         rabbitTemplate.send("", queueName, new Message(JSONObject.toJSONString(msg).getBytes(), properties));
+    }
+
+    /**
+     * 队列扫描锁：防止同一队列的并发扫描互相干扰（listPage1 统计与撤回共用同一把锁）
+     */
+    private static final Map<String, Object> QUEUE_SCAN_LOCKS = new ConcurrentHashMap<>();
+
+    /**
+     * 队列扫描结果缓存：TTL 内同一队列只扫描一次。
+     * listPage1 统计待下发消息数时，一页内多个同空间区域会反复调用 countQueueMessages
+     * （如1号馆所有区域共用 Lighting_operations 队列），若每次都对同一队列全量 basicGet/放回扫描，
+     * 队列消息多时会严重超时，故按队列缓存扫描结果，仅对缓存的 body 列表按条件过滤。
+     */
+    private static final Map<String, ScanCacheEntry> QUEUE_SCAN_CACHE = new ConcurrentHashMap<>();
+    /** 统计缓存有效期（毫秒）：列表展示的待下发消息数为近似值，容忍短时间延迟 */
+    private static final long SCAN_CACHE_TTL = 5000L;
+
+    /** 队列扫描缓存项 */
+    private static class ScanCacheEntry {
+        final long scanTime;
+        final List<byte[]> bodies;
+        ScanCacheEntry(long scanTime, List<byte[]> bodies) {
+            this.scanTime = scanTime;
+            this.bodies = bodies;
+        }
+    }
+
+    /**
+     * 统计队列中未被消费且命中 condition 的消息条数：
+     * 逐条取出队列头消息检查，不删除任何消息，全部按原相对顺序放回队列。
+     * 用于按区域精确统计待下发消息数（共享队列只统计本区域的消息）。
+     * 同一队列 TTL 内只真实扫描一次（结果缓存），其余调用直接在缓存 body 列表上按条件过滤，避免重复扫描拖垮接口。
+     * @param queueName 队列名
+     * @param condition 消息体匹配条件，null 时不执行
+     * @return 命中条数，执行失败返回0
+     */
+    public int countQueueMessages(String queueName, Predicate<byte[]> condition) {
+        if (condition == null) {
+            return 0;
+        }
+        Object lock = QUEUE_SCAN_LOCKS.computeIfAbsent(queueName, k -> new Object());
+        synchronized (lock) {
+            // 缓存命中：直接在缓存的 body 列表上按条件过滤，不再重复扫描队列
+            ScanCacheEntry cache = QUEUE_SCAN_CACHE.get(queueName);
+            if (cache != null && System.currentTimeMillis() - cache.scanTime < SCAN_CACHE_TTL) {
+                int matched = 0;
+                for (byte[] body : cache.bodies) {
+                    if (condition.test(body)) {
+                        matched++;
+                    }
+                }
+                return matched;
+            }
+            // 缓存过期或缺失：扫描队列一次并填充缓存
+            List<byte[]> bodies = scanQueueBodies(queueName);
+            if (bodies == null) {
+                return 0;
+            }
+            // 清理过期缓存，避免 Map 无限增长
+            QUEUE_SCAN_CACHE.entrySet().removeIf(e -> System.currentTimeMillis() - e.getValue().scanTime >= SCAN_CACHE_TTL);
+            QUEUE_SCAN_CACHE.put(queueName, new ScanCacheEntry(System.currentTimeMillis(), bodies));
+            int matched = 0;
+            for (byte[] body : bodies) {
+                if (condition.test(body)) {
+                    matched++;
+                }
+            }
+            return matched;
+        }
+    }
+
+    /**
+     * 扫描队列中未被消费的所有消息，收集 body 后全部放回队列（保持原相对顺序）。
+     * 仅做统计采集，不删除任何消息；配合 QUEUE_SCAN_CACHE 缓存避免同一队列重复扫描。
+     * @param queueName 队列名
+     * @return 消息 body 列表；队列不存在或扫描异常返回 null
+     */
+    private List<byte[]> scanQueueBodies(String queueName) {
+        // 队列不存在时跳过，避免 basicGet 触发 404 NOT_FOUND 通道错误
+        try {
+            if (rabbitAdmin.getQueueInfo(queueName) == null) {
+                log.warn("【MQ扫描】队列不存在，跳过统计：queue={}", queueName);
+                return new ArrayList<>();
+            }
+        } catch (Exception e) {
+            log.warn("【MQ扫描】检查队列失败，跳过统计：queue={}, error={}", queueName, e.getMessage());
+            return new ArrayList<>();
+        }
+        List<byte[]> bodies = new ArrayList<>();
+        try {
+            rabbitTemplate.execute(channel -> {
+                List<Long> toRequeue = new ArrayList<>();
+                int scanned = 0;
+                final int MAX_SCAN = 5000;
+                while (scanned < MAX_SCAN) {
+                    GetResponse response = channel.basicGet(queueName, false);
+                    if (response == null) {
+                        break;
+                    }
+                    scanned++;
+                    bodies.add(response.getBody());
+                    toRequeue.add(response.getEnvelope().getDeliveryTag());
+                }
+                // 未删除的消息放回队列，倒序放回保持原相对顺序
+                for (int i = toRequeue.size() - 1; i >= 0; i--) {
+                    channel.basicNack(toRequeue.get(i), false, true);
+                }
+                if (scanned >= MAX_SCAN) {
+                    log.warn("【MQ扫描】队列消息较多，本次最多扫描 {} 条：queue={}", MAX_SCAN, queueName);
+                }
+                return null;
+            });
+        } catch (Exception e) {
+            log.error("【MQ扫描】扫描队列失败：queue={}, error={}", queueName, e.getMessage(), e);
+            return null;
+        }
+        return bodies;
+    }
+
+    /**
+     * 按条件选择性撤回（删除）队列中未被消费的消息：
+     * 逐条取出队列头消息，body 匹配 condition 的 ack 删除，不匹配的放回队列（保持相对顺序），
+     * 返回删除条数。用于按区域撤回——共享队列（如北区同网关、1号馆、老空间）只删本区域的消息，不动其他区域。
+     * @param queueName 队列名
+     * @param condition 消息体匹配条件（匹配则删除），null 时不执行
+     * @return 撤回（删除）的消息数，执行失败返回0
+     */
+    public int recallQueueMessages(String queueName, Predicate<byte[]> condition) {
+        return scanQueueMessages(queueName, condition, true);
+    }
+
+    /**
+     * 扫描队列中未被消费的消息：命中 condition 的计数（deleteMatched=true 时同时 ack 删除），
+     * 未删除的消息全部放回队列（倒序放回保持原相对顺序）。
+     */
+    private int scanQueueMessages(String queueName, Predicate<byte[]> condition, boolean deleteMatched) {
+        if (condition == null) {
+            return 0;
+        }
+        // 队列不存在时跳过，避免 basicGet 触发 404 NOT_FOUND 通道错误
+        try {
+            if (rabbitAdmin.getQueueInfo(queueName) == null) {
+                log.warn("【MQ扫描】队列不存在，跳过统计/撤回：queue={}", queueName);
+                return 0;
+            }
+        } catch (Exception e) {
+            log.warn("【MQ扫描】检查队列失败，跳过统计/撤回：queue={}, error={}", queueName, e.getMessage());
+            return 0;
+        }
+        AtomicInteger matched = new AtomicInteger(0);
+        Object lock = QUEUE_SCAN_LOCKS.computeIfAbsent(queueName, k -> new Object());
+        synchronized (lock) {
+            try {
+                rabbitTemplate.execute(channel -> {
+                    List<Long> toRequeue = new ArrayList<>();
+                    int scanned = 0;
+                    final int MAX_SCAN = 5000;
+                    while (scanned < MAX_SCAN) {
+                        GetResponse response = channel.basicGet(queueName, false);
+                        if (response == null) {
+                            break;
+                        }
+                        scanned++;
+                        boolean hit = condition.test(response.getBody());
+                        if (hit) {
+                            matched.incrementAndGet();
+                        }
+                        if (deleteMatched && hit) {
+                            channel.basicAck(response.getEnvelope().getDeliveryTag(), false);
+                        } else {
+                            toRequeue.add(response.getEnvelope().getDeliveryTag());
+                        }
+                    }
+                    // 未删除的消息放回队列，倒序放回保持原相对顺序
+                    for (int i = toRequeue.size() - 1; i >= 0; i--) {
+                        channel.basicNack(toRequeue.get(i), false, true);
+                    }
+                    if (scanned >= MAX_SCAN) {
+                        log.warn("【MQ扫描】队列消息较多，本次最多扫描 {} 条：queue={}", MAX_SCAN, queueName);
+                    }
+                    return null;
+                });
+            } catch (Exception e) {
+                log.error("【MQ扫描】扫描队列失败：queue={}, error={}", queueName, e.getMessage(), e);
+            }
+        }
+        return matched.get();
     }
 
 }

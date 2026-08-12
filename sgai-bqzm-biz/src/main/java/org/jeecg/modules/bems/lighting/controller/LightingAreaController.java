@@ -97,6 +97,18 @@ public class LightingAreaController {
     }
 
     /**
+     * 撤回区域MQ下发消息
+     * 只删除该区域下发、且未被消费的消息（共享队列不影响其他区域），并把待下发消息数清零
+     * @param id 区域id
+     */
+    @ApiOperation("撤回区域MQ下发消息")
+    @PostMapping("/recallMq")
+    public Result<String> recallMq(Long id){
+        int count = service.recallMqMessages(id);
+        return Result.ok("已撤回未消费消息 " + count + " 条");
+    }
+
+    /**
      * 获取所有关联名称
      */
     @ApiOperation("获取所有关联名称")
@@ -124,6 +136,29 @@ public class LightingAreaController {
     @GetMapping("/detail")
     public Result<?> detail(Long id){
         return Result.ok(service.getById(id));
+    }
+
+    /**
+     * 按区域查询1号馆的所有区域：查询条件写死 space_name='1号馆'，id 参数仅为兼容前端调用
+     * @param id 区域id（前端固定传，如 478）
+     */
+    @ApiOperation("查询1号馆所有区域（查询条件写死 space_name='1号馆'，id 仅为兼容前端传参，如 478）")
+    @GetMapping("/listBySpaceName")
+    public Result<?> listBySpaceName(Long id){
+        return Result.ok(service.listBySpaceName(id));
+    }
+
+    /**
+     * 按空间名称控制该空间下所有回路的开/关（走1号馆902控制逻辑）
+     * @param spaceName 空间名称（如：1号馆）
+     * @param operationType 操作类型：开启 / 关闭
+     */
+    @ApiOperation("按空间名称控制所有回路（走1号馆902控制逻辑）")
+    @PostMapping("/controlBySpaceName")
+    public Result<?> controlBySpaceName(String spaceName, String operationType){
+        boolean type = "开启".equals(operationType);
+        service.controlBySpaceName(spaceName, type);
+        return Result.ok(operationType+"成功");
     }
 
     /**

@@ -66,6 +66,10 @@ public class LightingCircuitServiceImpl extends ServiceImpl<CircuitMapper, Light
                 .collect(Collectors.toMap(LightingArea::getId, LightingArea::getAreaName));
         for (LightingCircuit record : records) {
             record.setAreaName(areaMap.get(record.getAreaId()));
+            // 开启总时长按实时计算（只改出参不落库）：
+            // - 开启中：累计值 + 当前开启周期已运行时长
+            // - 已关闭：显示累计值；累计值为空且本周期时长可算时，兜底显示本次开关周期时长（避免历史数据缺失显示0）
+            fillDisplayDuration(record, LocalDateTime.now());
         }
         return page;
     }
@@ -127,6 +131,46 @@ public class LightingCircuitServiceImpl extends ServiceImpl<CircuitMapper, Light
                 .lt(LightingArea::getAllDuration,circuit.getAllDuration())
                 .set(LightingArea::getAllDuration,circuit.getAllDuration())
         );
+    }
+
+    /**
+     * 记录回路控制操作人/操作时间（区域全开/全关等批量控制调用，不改变回路状态与开关时间）
+     */
+    @Override
+    public void recordControlOperator(LightingCircuit circuit, String operatorBy) {
+        if (circuit == null || circuit.getId() == null) {
+            return;
+        }
+        circuit.setOperatorBy(operatorBy != null && !operatorBy.isEmpty() ? operatorBy : currentOperator());
+        circuit.setOperatorTime(LocalDateTime.now());
+        super.updateById(circuit);
+    }
+
+    /**
+     * 回路开启总时长（出参，不落库）：
+     * - 开启中：allDuration 累计值 + 从 startTime 到当前时间的时长
+     * - 已关闭：allDuration 累计值；若累计值为空/0 且 startTime、closingTime 齐全，则兜底显示本次开关周期时长
+     */
+    private void fillDisplayDuration(LightingCircuit circuit, LocalDateTime now) {
+        Long duration = circuit.getAllDuration();
+        if (duration == null || duration < 0) {
+            duration = 0L;
+        }
+        LocalDateTime start = circuit.getStartTime();
+        if (start == null) {
+            circuit.setAllDuration(duration);
+            return;
+        }
+        if (LightingCircuit.STATUS_ON.equals(circuit.getStatus())) {
+            // 开启中：实时累加当前周期
+            if (!start.isAfter(now)) {
+                duration += LocalDateTimeUtil.between(start, now).getSeconds();
+            }
+        } else if (duration == 0L && circuit.getClosingTime() != null && !circuit.getClosingTime().isBefore(start)) {
+            // 已关闭且累计值为空：兜底显示本次开关周期时长
+            duration = LocalDateTimeUtil.between(start, circuit.getClosingTime()).getSeconds();
+        }
+        circuit.setAllDuration(duration);
     }
 
     /**

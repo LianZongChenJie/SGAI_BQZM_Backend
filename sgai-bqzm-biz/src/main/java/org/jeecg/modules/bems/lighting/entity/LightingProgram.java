@@ -1,6 +1,7 @@
 package org.jeecg.modules.bems.lighting.entity;
 
 import com.baomidou.mybatisplus.annotation.IdType;
+import com.baomidou.mybatisplus.annotation.TableField;
 import com.baomidou.mybatisplus.annotation.TableId;
 import com.baomidou.mybatisplus.annotation.TableName;
 import com.fasterxml.jackson.databind.annotation.JsonSerialize;
@@ -84,4 +85,11 @@ public class LightingProgram extends BaseEntity {
      */
     @ApiModelProperty(value = "备注")
     private String remark;
+
+    /**
+     * 节目状态（非表字段，/list 查询时从泛光总控系统按 groupId 匹配回填：运行中/停止）
+     */
+    @TableField(exist = false)
+    @ApiModelProperty(value = "节目状态（运行中/停止）")
+    private String programState;
 }

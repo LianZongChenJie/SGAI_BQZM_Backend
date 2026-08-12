@@ -89,4 +89,16 @@ public class LightingProgramController {
         service.control(programId, operationType);
         return Result.ok();
     }
+
+    /**
+     * 节目全开/全关：批量控制全部（或指定空间）启用状态的节目，自动记录控制日志
+     */
+    @ApiOperation("节目全开/全关（operationType：开启/关闭 或 OPEN/CLOSE；space 可选，按空间过滤，不传控制全部启用节目）")
+    @PostMapping("/allControl")
+    public Result<String> allControl(@RequestParam String operationType,
+                                     @RequestParam(required = false) String space) {
+        int count = service.allControl(operationType, space);
+        String display = ("OPEN".equalsIgnoreCase(operationType) || "开启".equals(operationType)) ? "全开" : "全关";
+        return Result.ok(display + "完成，共下发 " + count + " 个节目");
+    }
 }

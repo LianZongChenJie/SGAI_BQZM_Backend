@@ -14,6 +14,7 @@ import org.jeecg.modules.bems.lighting.service.ILightingSceneService;
 import org.springframework.web.bind.annotation.*;
 
 import javax.servlet.http.HttpServletResponse;
+import java.util.List;
 
 /**
  * 照明-场景管理
@@ -112,5 +113,14 @@ public class LightingSceneController {
     @GetMapping("/space")
     public Result<LightingSpaceScenesVo> space(@RequestParam String spaceId) {
         return Result.ok(service.getBySpace(spaceId));
+    }
+
+    /**
+     * 按区域查询场景（出参结构同 listPage，含关联节目名称/运行中节目）
+     */
+    @ApiOperation("按区域查询场景（areaId 传 lighting_area.id；返回明细包含该区域或其回路的场景，含关联节目信息）")
+    @GetMapping("/listByArea")
+    public Result<List<LightingPlan>> listByArea(@RequestParam Long areaId) {
+        return Result.ok(service.listByArea(areaId));
     }
 }

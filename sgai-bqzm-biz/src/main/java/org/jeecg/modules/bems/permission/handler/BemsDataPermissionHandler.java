@@ -90,7 +90,7 @@ public class BemsDataPermissionHandler implements MultiDataPermissionHandler {
             );
 
             if (permissionExpression == null) {
-                log.warn("权限条件构建失败");
+//                log.warn("权限条件构建失败");
                 return null;
             }
 

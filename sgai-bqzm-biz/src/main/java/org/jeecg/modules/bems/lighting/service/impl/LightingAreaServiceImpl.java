@@ -1,6 +1,7 @@
 package org.jeecg.modules.bems.lighting.service.impl;
 
 import cn.hutool.core.collection.CollectionUtil;
+import com.alibaba.fastjson.JSONObject;
 import org.apache.poi.ss.usermodel.Workbook;
 import org.jeecgframework.poi.excel.ExcelExportUtil;
 import org.jeecgframework.poi.excel.entity.ExportParams;
@@ -26,6 +27,7 @@ import org.jeecg.modules.bems.lighting.service.ILightingCircuitService;
 import org.jeecg.modules.bems.lighting.service.ILightingDistrictService;
 import org.jeecg.modules.bems.lighting.service.ILightingOperationLogService;
 import org.jeecg.modules.bems.lighting.service.LightingService;
+import org.jeecg.modules.bems.lighting.mq.constant.LightingMqConstant;
 import org.jeecg.modules.bems.lighting.mq.send.LightingSendService;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.BeanUtils;
@@ -42,10 +44,12 @@ import java.time.LocalDateTime;
 import java.time.format.DateTimeFormatter;
 import java.util.Collection;
 import java.util.Collections;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Set;
+import java.util.function.Predicate;
 import java.util.stream.Collectors;
 
 
@@ -100,6 +104,8 @@ public class LightingAreaServiceImpl extends ServiceImpl<LightingAreaMapper, Lig
         fillDistrictName(page.getRecords());
         // 区域状态按区域下回路的实际状态计算（任一回路开启则区域为开启）
         fillStatusByCircuit(page.getRecords());
+        // 查询MQ中未被消费的下发消息数，更新待下发消息数字段
+        fillPendingMsgCount(page.getRecords());
         return page;
     }
 
@@ -191,6 +197,139 @@ public class LightingAreaServiceImpl extends ServiceImpl<LightingAreaMapper, Lig
     }
 
     /**
+     * 撤回区域MQ下发消息：只删除该区域下发、且未被消费的消息（共享队列不影响其他区域），并将待下发消息数清零
+     * @param id 区域id
+     * @return 撤回的消息总数
+     */
+    @Override
+    public int recallMqMessages(Long id) {
+        LightingArea area = super.getById(id);
+        if (area == null) {
+            throw new JeecgBootException("区域不存在");
+        }
+        Set<String> queues = resolveAreaQueues(area, null);
+        Predicate<byte[]> matcher = buildAreaMessageMatcher(area, null);
+        if (matcher == null) {
+            log.warn("【MQ撤回】区域无可识别的下发消息（无回路或格式无法匹配），跳过：id={}, areaName={}", id, area.getAreaName());
+        }
+        int total = 0;
+        for (String queueName : queues) {
+            int recalled = matcher == null ? 0 : sendService.recallQueueMessages(queueName, matcher);
+            log.info("【MQ撤回】区域：{}，队列：{}，撤回本区域未消费消息：{}条", area.getAreaName(), queueName, recalled);
+            total += recalled;
+        }
+        // 撤回后待下发消息数清零
+        super.update(new LambdaUpdateWrapper<LightingArea>()
+                .eq(LightingArea::getId, id)
+                .set(LightingArea::getPendingMsgCount, 0));
+        log.info("【MQ撤回】完成：区域：{}，共撤回 {} 条", area.getAreaName(), total);
+        return total;
+    }
+
+    /**
+     * 构建按区域识别MQ下发消息的匹配器（匹配则命中/删除）：
+     * - space=902（1号馆）：消息 GatewayAdr|KnxAdr 命中区域下回路编码提取的 IP|KNX地址
+     * - space=903（北区）：消息 GatewayCode-CircuitCode 命中区域下回路编码
+     * - 其他空间：消息 AreaID（=区域编码）命中本区域
+     * @param area 区域
+     * @param circuits 区域下回路（可为null，内部按需查询；仅 902/903 需要）
+     * @return 匹配器；区域无回路或消息无法识别时返回 null（不命中/不撤回任何消息）
+     */
+    private Predicate<byte[]> buildAreaMessageMatcher(LightingArea area, List<LightingCircuit> circuits) {
+        if (area == null || StringUtils.isEmpty(area.getSpace())) {
+            return null;
+        }
+        String space = area.getSpace();
+        if ("902".equals(space)) {
+            // 1号馆：按 GatewayAdr|KnxAdr 匹配区域下回路
+            Set<String> circuitKeys = new HashSet<>();
+            if (circuits == null) {
+                circuits = circuitService.list(new LambdaQueryWrapper<LightingCircuit>()
+                        .eq(LightingCircuit::getAreaId, area.getId()));
+            }
+            for (LightingCircuit circuit : circuits) {
+                String key = parseHgCircuitKey(circuit.getCircuitCode());
+                if (key != null) {
+                    circuitKeys.add(key);
+                }
+            }
+            if (circuitKeys.isEmpty()) {
+                return null;
+            }
+            return body -> {
+                try {
+                    JSONObject json = JSONObject.parseObject(new String(body));
+                    String key = json.getString("GatewayAdr") + "|" + json.getString("KnxAdr");
+                    return circuitKeys.contains(key);
+                } catch (Exception e) {
+                    return false;
+                }
+            };
+        }
+        if ("903".equals(space)) {
+            // 北区：按 GatewayCode-CircuitCode 匹配区域下回路
+            Set<String> circuitCodes = new HashSet<>();
+            if (circuits == null) {
+                circuits = circuitService.list(new LambdaQueryWrapper<LightingCircuit>()
+                        .eq(LightingCircuit::getAreaId, area.getId()));
+            }
+            for (LightingCircuit circuit : circuits) {
+                if (StringUtils.isNotEmpty(circuit.getCircuitCode())) {
+                    circuitCodes.add(circuit.getCircuitCode());
+                }
+            }
+            if (circuitCodes.isEmpty()) {
+                return null;
+            }
+            return body -> {
+                try {
+                    JSONObject json = JSONObject.parseObject(new String(body));
+                    String fullCode = json.getString("GatewayCode") + "-" + json.getString("CircuitCode");
+                    return circuitCodes.contains(fullCode);
+                } catch (Exception e) {
+                    return false;
+                }
+            };
+        }
+        // 老空间：消息 AreaID = 区域编码（数值），匹配本区域
+        if (!area.getAreaCode().matches("\\d+")) {
+            return null;
+        }
+        final int areaCode = Integer.parseInt(area.getAreaCode());
+        return body -> {
+            try {
+                Integer areaId = JSONObject.parseObject(new String(body)).getInteger("AreaID");
+                return areaId != null && areaId.equals(areaCode);
+            } catch (Exception e) {
+                return false;
+            }
+        };
+    }
+
+    /**
+     * 从1号馆回路编码中提取 GatewayAdr|KnxAdr 匹配键
+     * 回路编码格式：Type=IpTunneling;HostAddress=10.22.133.32-4.1.25-3/7/18
+     * 与 LightingSendService.send1hgControl 的提取规则一致
+     */
+    private String parseHgCircuitKey(String circuitCode) {
+        if (StringUtils.isEmpty(circuitCode) || !circuitCode.contains("HostAddress=")) {
+            return null;
+        }
+        int start = circuitCode.indexOf("HostAddress=") + "HostAddress=".length();
+        int end = circuitCode.indexOf('-', start);
+        if (end < 0) {
+            end = circuitCode.length();
+        }
+        String ip = circuitCode.substring(start, end);
+        int lastDash = circuitCode.lastIndexOf('-');
+        if (lastDash < 0 || lastDash >= circuitCode.length() - 1) {
+            return null;
+        }
+        String knxAdr = circuitCode.substring(lastDash + 1);
+        return ip + "|" + knxAdr;
+    }
+
+    /**
      * 区域-全开
      * @param id 区域id
      */
@@ -261,6 +400,66 @@ public class LightingAreaServiceImpl extends ServiceImpl<LightingAreaMapper, Lig
         return list;
     }
 
+    /**
+     * 按区域查询1号馆的所有区域：查询条件写死为 space_name='1号馆'，id 参数仅为兼容前端调用（不参与查询）
+     * 等价于 SELECT * FROM lighting_area WHERE space_name = '1号馆' ORDER BY sort
+     */
+    @Override
+    public List<LightingArea> listBySpaceName(Long id) {
+        List<LightingArea> list = super.list(new LambdaQueryWrapper<LightingArea>()
+                .eq(LightingArea::getSpaceName, "1号馆")
+                .orderByAsc(LightingArea::getSort)
+                .orderByAsc(LightingArea::getId));
+        fillDistrictName(list);
+        return list;
+    }
+
+    /**
+     * 按空间名称控制该空间下所有回路的开/关（走1号馆902控制逻辑）
+     * 等价于 SELECT * FROM lighting_area WHERE space_name = #{spaceName}，
+     * 再遍历各区域下所有回路，逐个调用 send1hgControl 下发
+     */
+    @Override
+    public void controlBySpaceName(String spaceName, boolean type){
+        if(StringUtils.isEmpty(spaceName)){
+            throw new JeecgBootException("spaceName 不能为空");
+        }
+
+        List<LightingArea> areaList = super.list(new LambdaQueryWrapper<LightingArea>()
+                .eq(LightingArea::getSpaceName, spaceName));
+        if(CollectionUtil.isEmpty(areaList)){
+            throw new JeecgBootException("未找到空间名称为【" + spaceName + "】的区域");
+        }
+
+        String value = type ? "1" : "0";
+        int sentCount = 0;
+        int areaCount = 0;
+        for(LightingArea area : areaList){
+            // 查询区域下所有回路
+            List<LightingCircuit> circuitList = circuitService.list(
+                    new LambdaQueryWrapper<LightingCircuit>().eq(LightingCircuit::getAreaId, area.getId()));
+            if(CollectionUtil.isEmpty(circuitList)){
+                continue;
+            }
+            areaCount++;
+            for(LightingCircuit circuit : circuitList){
+                String circuitCode = circuit.getCircuitCode();
+                if(StringUtils.isEmpty(circuitCode)){
+                    continue;
+                }
+                try {
+                    sendService.send1hgControl(circuitCode, value);
+                    sentCount++;
+                } catch (Exception e){
+                    log.error("【1号馆】发送回路控制消息失败：circuitId={}, circuitName={}", circuit.getId(), circuit.getCircuitName(), e);
+                }
+            }
+        }
+
+        log.info("【1号馆】按空间控制完成：spaceName={}, 操作={}, 区域数={}, 下发回路数={}",
+                spaceName, type ? "全开" : "全关", areaCount, sentCount);
+    }
+
     @Override
     public void exportExcel(LightingAreaQueryDto params, HttpServletResponse response) {
         // 查询条件与 listPage1 一致，不分页查全量
@@ -292,7 +491,8 @@ public class LightingAreaServiceImpl extends ServiceImpl<LightingAreaMapper, Lig
                 .like(StringUtils.isNotEmpty(params.getDeviceNo()), LightingArea::getDeviceNo, params.getDeviceNo())
                 .eq(params.getDistrictId() != null, LightingArea::getDistrictId, params.getDistrictId())
                 .like(StringUtils.isNotEmpty(params.getAreaName()), LightingArea::getAreaName, params.getAreaName())
-                .orderByAsc(LightingArea::getSort);
+                .orderByAsc(LightingArea::getSort)
+                .orderByAsc(LightingArea::getId);
     }
 
     /**
@@ -344,6 +544,119 @@ public class LightingAreaServiceImpl extends ServiceImpl<LightingAreaMapper, Lig
     }
 
     /**
+     * 查询MQ中未被消费的下发消息数，更新待下发消息数字段（listPage1 时调用，同步落库）
+     * 按区域精确统计：扫描区域下发涉及的队列，只统计该区域下发的消息（复用撤回接口的扫描逻辑），
+     * 共享队列（如北区同网关、1号馆、老空间）不会把其他区域的消息算进来。
+     * 区域下发涉及的队列：
+     * - space=902（1号馆）：Lighting_operations
+     * - space=903（北区）：lighting_control_bq_XX（按区域下各回路编码前缀的网关编号）
+     * - 其他空间：按空间对应的单个队列
+     */
+    private void fillPendingMsgCount(List<LightingArea> areas) {
+        if (CollectionUtil.isEmpty(areas)) {
+            return;
+        }
+        Set<Long> areaIds = areas.stream()
+                .map(LightingArea::getId)
+                .filter(Objects::nonNull)
+                .collect(Collectors.toSet());
+        // 一次查出当前页区域下的所有回路（北区903需要按回路编码解析网关队列）
+        List<LightingCircuit> circuits = CollectionUtil.isEmpty(areaIds) ? Collections.emptyList()
+                : circuitService.list(new LambdaQueryWrapper<LightingCircuit>().in(LightingCircuit::getAreaId, areaIds));
+        Map<Long, List<LightingCircuit>> circuitsByArea = circuits.stream()
+                .filter(c -> c.getAreaId() != null)
+                .collect(Collectors.groupingBy(LightingCircuit::getAreaId));
+
+        for (LightingArea area : areas) {
+            List<LightingCircuit> areaCircuits = circuitsByArea.getOrDefault(area.getId(), Collections.emptyList());
+            Set<String> queues = resolveAreaQueues(area, areaCircuits);
+            // 按区域精确统计：只统计该区域下发、且未被消费的消息
+            Predicate<byte[]> matcher = buildAreaMessageMatcher(area, areaCircuits);
+            int pending = 0;
+            if (matcher != null) {
+                for (String queueName : queues) {
+                    pending += sendService.countQueueMessages(queueName, matcher);
+                }
+            }
+            area.setPendingMsgCount(pending);
+            // 同步落库，供后续查询/导出直接使用
+            super.update(new LambdaUpdateWrapper<LightingArea>()
+                    .eq(LightingArea::getId, area.getId())
+                    .set(LightingArea::getPendingMsgCount, pending));
+        }
+    }
+
+    /**
+     * 解析区域下发所涉及的MQ队列
+     * @param area 区域
+     * @param circuits 区域下回路（可为null，内部按需查询；仅北区903需要）
+     * @return 队列名集合
+     */
+    private Set<String> resolveAreaQueues(LightingArea area, List<LightingCircuit> circuits) {
+        Set<String> queues = new HashSet<>();
+        if (area == null || StringUtils.isEmpty(area.getSpace())) {
+            return queues;
+        }
+        String space = area.getSpace();
+        if ("902".equals(space)) {
+            // 1号馆：全部走 Lighting_operations 队列
+            queues.add(LightingMqConstant.QUEUE_LIGHTING_SEND_1HG);
+        } else if ("903".equals(space)) {
+            // 北区：按回路编码前缀的网关编号拼队列（lighting_control_bq_XX）
+            if (circuits == null) {
+                circuits = circuitService.list(new LambdaQueryWrapper<LightingCircuit>()
+                        .eq(LightingCircuit::getAreaId, area.getId()));
+            }
+            for (LightingCircuit circuit : circuits) {
+                String gatewayCode = parseBqGatewayCode(circuit.getCircuitCode());
+                if (gatewayCode != null) {
+                    queues.add(LightingMqConstant.QUEUE_LIGHTING_SEND_BQ_PREFIX + gatewayCode);
+                }
+            }
+        } else {
+            // 老空间：区域开/关为整区域场景消息，发到空间对应的单个队列
+            String queueName = resolveSpaceQueue(space);
+            if (queueName != null) {
+                queues.add(queueName);
+            }
+        }
+        return queues;
+    }
+
+    /**
+     * 从北区回路编码（11-20）中解析网关编号，非法格式返回 null
+     */
+    private String parseBqGatewayCode(String circuitCode) {
+        if (StringUtils.isEmpty(circuitCode)) {
+            return null;
+        }
+        int dashIndex = circuitCode.indexOf('-');
+        if (dashIndex <= 0) {
+            return null;
+        }
+        String gatewayCode = circuitCode.substring(0, dashIndex);
+        return gatewayCode.matches("\\d+") ? gatewayCode : null;
+    }
+
+    /**
+     * 老空间区域控制队列（与 LightingSendService.send 的 gatewayCode 映射保持一致）
+     */
+    private String resolveSpaceQueue(String space) {
+        switch (space) {
+            case "1":
+                return LightingMqConstant.QUEUE_LIGHTING_SEND;      // 金安桥
+            case "2":
+                return LightingMqConstant.QUEUE_LIGHTING_SEND_YGL;  // 一高炉
+            case "3":
+                return LightingMqConstant.QUEUE_LIGHTING_SEND_039;  // 039
+            case "4":
+                return LightingMqConstant.QUEUE_LIGHTING_SEND_DTT;  // 大跳台
+            default:
+                return null;
+        }
+    }
+
+    /**
      * 回填片区名称
      */
     private void fillDistrictName(List<LightingArea> areas) {
@@ -375,10 +688,14 @@ public class LightingAreaServiceImpl extends ServiceImpl<LightingAreaMapper, Lig
         // 1号馆（space=902）走新的MQ转发通道，不走老的KNX
         if("902".equals(area.getSpace())){
             control1hg(area, type);
+        } else if("901".equals(area.getSpace())){
+            // 四高炉（space=901）走电箱控制小程序通道，按 area_code（deviceSn）发送
+            controlSgf(area, type);
         } else if("903".equals(area.getSpace())){
             // 北区（space=903）走新的MQ转发通道
             controlBq(area, type);
         } else {
+            // 其他空间（金安桥=1、一高炉=2等）走老的KNX通道
             if(type) {
                 service.areaOpen(area.getSpace(),area.getAreaCode(),area.getOpenCode());
             }else {
@@ -418,6 +735,8 @@ public class LightingAreaServiceImpl extends ServiceImpl<LightingAreaMapper, Lig
             List<LightingOperationLog> childLogs = new java.util.ArrayList<>();
             String circuitOpType = type ? "回路开启" : "回路关闭";
             for (LightingCircuit circuit : circuitList) {
+                // 记录回路操作人/操作时间（区域全开/全关不改变回路状态，状态以设备回传为准）
+                circuitService.recordControlOperator(circuit, operationBy);
                 LightingOperationLog childLog = new LightingOperationLog();
                 childLog.setLogType(LightingOperationLog.LOG_TYPE_CIRCUIT);
                 childLog.setParentId(areaLog.getId());
@@ -500,5 +819,28 @@ public class LightingAreaServiceImpl extends ServiceImpl<LightingAreaMapper, Lig
         }
 
         log.info("【北区】区域控制完成：areaName={}, 操作={}", area.getAreaName(), type ? "全开" : "全关");
+    }
+
+    /**
+     * 四高炉（space=901）区域控制（走电箱控制小程序通道）
+     * 四高炉区域下无回路，区域本身对应一个电箱设备，area_code 即设备编号 deviceSn（如 yel_power_sg06）
+     */
+    private void controlSgf(LightingArea area, boolean type){
+        String areaCode = area.getAreaCode();
+        if(StringUtils.isEmpty(areaCode)){
+            log.warn("【四高炉】区域编码为空，无法控制：areaId={}, areaName={}", area.getId(), area.getAreaName());
+            return;
+        }
+
+        String onOff = type ? "1" : "0";
+        log.info("【四高炉】区域控制：areaName={}, 操作={}, deviceSn={}", area.getAreaName(), type ? "全开" : "全关", areaCode);
+
+        try {
+            sendService.sendSgfControl(areaCode, onOff);
+        } catch (Exception e){
+            log.error("【四高炉】发送电箱控制消息失败：areaId={}, areaName={}, deviceSn={}", area.getId(), area.getAreaName(), areaCode, e);
+        }
+
+        log.info("【四高炉】区域控制完成：areaName={}, 操作={}", area.getAreaName(), type ? "全开" : "全关");
     }
 }

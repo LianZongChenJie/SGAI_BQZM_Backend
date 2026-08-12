@@ -921,4 +921,55 @@ public class LightingSceneServiceImpl extends ServiceImpl<LightingSceneMapper, L
         vo.setScenes(scenes);
         return vo;
     }
+
+    /**
+     * 按区域查询场景（出参为 LightingPlan 结构，与 listPage 一致，含关联节目名称/运行中节目）。
+     * 归属规则：场景明细包含该区域（relType=区域 且 relId=areaId），或包含该区域下的回路。
+     * 注意：明细 in 查询需在集合非空时才执行，避免 MyBatis-Plus 跳过条件查出全表。
+     */
+    @Override
+    public List<LightingPlan> listByArea(Long areaId) {
+        if (areaId == null) {
+            throw new JeecgBootException("areaId 不能为空");
+        }
+        // 区域不存在时自然查不到回路和明细，返回空列表，不报错
+        // 1. 该区域下的回路
+        List<Long> circuitIds = lightingCircuitService.list(
+                        new LambdaQueryWrapper<LightingCircuit>().eq(LightingCircuit::getAreaId, areaId))
+                .stream().map(LightingCircuit::getId).collect(Collectors.toList());
+
+        // 2. 反查明细包含该区域（或该区域回路）的场景
+        Set<Long> sceneIds = new HashSet<>();
+        List<LightingSceneDetail> areaDetails = detailMapper.selectList(
+                new LambdaQueryWrapper<LightingSceneDetail>()
+                        .eq(LightingSceneDetail::getRelType, LightingScene.REL_TYPE_AREA)
+                        .eq(LightingSceneDetail::getRelId, areaId));
+        areaDetails.forEach(d -> sceneIds.add(d.getSceneId()));
+        if (CollectionUtil.isNotEmpty(circuitIds)) {
+            List<LightingSceneDetail> circuitDetails = detailMapper.selectList(
+                    new LambdaQueryWrapper<LightingSceneDetail>()
+                            .eq(LightingSceneDetail::getRelType, LightingScene.REL_TYPE_CIRCUIT)
+                            .in(LightingSceneDetail::getRelId, circuitIds));
+            circuitDetails.forEach(d -> sceneIds.add(d.getSceneId()));
+        }
+        if (sceneIds.isEmpty()) {
+            return Collections.emptyList();
+        }
+
+        // 3. 查询场景 + 明细 + 关联节目，映射为 plan/listPage 出参结构（含节目名称/运行中节目）
+        List<LightingScene> scenes = super.listByIds(sceneIds);
+        scenes.sort(Comparator.comparing(LightingScene::getSort, Comparator.nullsLast(Long::compareTo)));
+        Map<Long, List<LightingSceneDetail>> detailMap = detailMapper.selectList(
+                        new LambdaQueryWrapper<LightingSceneDetail>()
+                                .in(LightingSceneDetail::getSceneId, sceneIds)
+                                .orderByAsc(LightingSceneDetail::getSort))
+                .stream()
+                .collect(Collectors.groupingBy(LightingSceneDetail::getSceneId));
+        Map<Long, LightingProgram> programMap = loadReferencedPrograms(scenes);
+        List<LightingPlan> records = scenes.stream()
+                .map(scene -> toPlan(scene, detailMap.getOrDefault(scene.getId(), Collections.emptyList()), programMap))
+                .collect(Collectors.toList());
+        fillRunningProgramDetail(records);
+        return records;
+    }
 }

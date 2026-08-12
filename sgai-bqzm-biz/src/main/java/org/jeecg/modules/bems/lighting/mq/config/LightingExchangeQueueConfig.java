@@ -44,6 +44,22 @@ public class LightingExchangeQueueConfig {
         return new Queue(LightingMqConstant.QUEUE_LIGHTING_SEND_YGL,true);
     }
 
+    /**
+     * 照明控制消息发送队列，039
+     */
+    @Bean
+    public Queue lightingSend039(){
+        return new Queue(LightingMqConstant.QUEUE_LIGHTING_SEND_039,true);
+    }
+
+    /**
+     * 照明控制消息发送队列，大跳台
+     */
+    @Bean
+    public Queue lightingSendDtt(){
+        return new Queue(LightingMqConstant.QUEUE_LIGHTING_SEND_DTT,true);
+    }
+
     @Bean
     public Queue lightingSendSglare(){
         return new Queue(LightingMqConstant.QUEUE_ELECTRIC_BOX_OPERATION,true);

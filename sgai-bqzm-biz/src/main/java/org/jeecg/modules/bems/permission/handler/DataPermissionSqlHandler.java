@@ -70,7 +70,7 @@ public class DataPermissionSqlHandler {
 
         // 没有任何权限条件，直接返回null，不加限制
         if (expressions.isEmpty()) {
-            log.info("无可用权限数据，不加权限限制: tableName={}", tableName);
+//            log.info("无可用权限数据，不加权限限制: tableName={}", tableName);
             return null;
         }
 

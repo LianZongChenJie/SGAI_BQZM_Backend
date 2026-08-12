@@ -123,6 +123,25 @@ public class YelIotService {
      * @return 运行中的节目（JSONObject 含 id/groupName/state 等字段）；无节目运行、未配置host或查询失败返回空列表
      */
     public List<JSONObject> getRunningGroups() {
+        List<JSONObject> all = fetchGroupStates();
+        // 只保留运行中/开启（state=1）的节目
+        all.removeIf(st -> st.getInteger("state") == null || st.getInteger("state") != 1);
+        return all;
+    }
+
+    /**
+     * 获取全部节目状态（不做 state=1 过滤，含停止中的节目）
+     *
+     * @return 全部节目状态（JSONObject 含 id/groupName/state 等字段）；未配置host或查询失败返回空列表
+     */
+    public List<JSONObject> getGroupStates() {
+        return fetchGroupStates();
+    }
+
+    /**
+     * 调用泛光总控系统 get_group_run_state，返回 data.state 全量列表
+     */
+    private List<JSONObject> fetchGroupStates() {
         // mock 模式：本地无法访问总控系统时返回样例数据，保证前端能看到节目运行状态字段
         if (mockEnabled) {
             return buildMockRunningGroups();
@@ -144,7 +163,7 @@ public class YelIotService {
                 log.error("泛光总控系统-获取节目运行状态失败：无响应");
                 return Collections.emptyList();
             }
-            log.info("泛光总控系统-获取节目运行状态成功：{}", s);
+//            log.info("泛光总控系统-获取节目运行状态成功：{}", s);
             JSONObject jsonObject = JSONObject.parseObject(s);
             // 这个接口 code=500 也可能返回数据，不按 code 判断，直接取 data.state
             if (jsonObject == null || jsonObject.get("data") == null) {
@@ -158,10 +177,7 @@ public class YelIotService {
             if (stateArray == null || stateArray.isEmpty()) {
                 return Collections.emptyList();
             }
-            List<JSONObject> all = stateArray.toJavaList(JSONObject.class);
-            // 只保留运行中/开启（state=1）的节目
-            all.removeIf(st -> st.getInteger("state") == null || st.getInteger("state") != 1);
-            return all;
+            return stateArray.toJavaList(JSONObject.class);
         } catch (Exception e) {
             log.error("泛光总控系统-获取节目运行状态异常。", e);
             return Collections.emptyList();

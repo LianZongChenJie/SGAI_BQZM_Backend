@@ -195,6 +195,12 @@ public class LightingArea {
     private Long districtId;
 
     /**
+     * 待下发消息数（MQ队列中未被消费的消息数，listPage1 时从MQ查询更新）
+     */
+    @ApiModelProperty(value = "待下发消息数")
+    private Integer pendingMsgCount;
+
+    /**
      * 片区名称（非表字段，查询时关联填充）
      */
     @TableField(exist = false)
