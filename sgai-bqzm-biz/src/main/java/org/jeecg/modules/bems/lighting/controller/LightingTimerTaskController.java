@@ -14,10 +14,12 @@ import org.jeecg.modules.bems.lighting.entity.LightingArea;
 import org.jeecg.modules.bems.lighting.entity.LightingCircuit;
 import org.jeecg.modules.bems.lighting.entity.LightingPlan;
 import org.jeecg.modules.bems.lighting.entity.LightingPlanExecutionTime;
+import org.jeecg.modules.bems.lighting.entity.LightingScene;
 import org.jeecg.modules.bems.lighting.service.ILightingAreaService;
 import org.jeecg.modules.bems.lighting.service.ILightingCircuitService;
 import org.jeecg.modules.bems.lighting.service.ILightingPlanExecutionTimeService;
 import org.jeecg.modules.bems.lighting.service.ILightingPlanService;
+import org.jeecg.modules.bems.lighting.service.ILightingSceneService;
 import org.springframework.web.bind.annotation.*;
 
 import java.util.*;
@@ -41,6 +43,8 @@ public class LightingTimerTaskController {
     private final ILightingAreaService areaService;
 
     private final ILightingCircuitService circuitService;
+
+    private final ILightingSceneService sceneService;
 
     /**
      * 定时任务列表（分页）
@@ -269,6 +273,11 @@ public class LightingTimerTaskController {
                     sb.append(c.getCircuitName());
                     return sb.toString();
                 }).collect(Collectors.joining("、"));
+                result.put(plan.getId(), names);
+            } else if (LightingPlan.REL_TYPE_SCENE.equals(plan.getRelType())) {
+                List<LightingScene> scenes = sceneService.listByIds(relIds);
+                String names = scenes.stream().map(LightingScene::getSceneName)
+                        .collect(Collectors.joining("、"));
                 result.put(plan.getId(), names);
             } else {
                 result.put(plan.getId(), plan.getRelIds());

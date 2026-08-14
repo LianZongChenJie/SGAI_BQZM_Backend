@@ -3,9 +3,11 @@ package org.jeecg.modules.bems.lighting.entity;
 import com.baomidou.mybatisplus.annotation.IdType;
 import com.baomidou.mybatisplus.annotation.TableId;
 import com.baomidou.mybatisplus.annotation.TableName;
+import com.fasterxml.jackson.annotation.JsonFormat;
 import lombok.Data;
+import org.springframework.format.annotation.DateTimeFormat;
 
-import java.time.LocalDateTime;
+import java.util.Date;
 
 /**
  * 照明计划执行日志（MQ 发送/消费追踪）
@@ -45,10 +47,14 @@ public class LightingPlanExecuteLog {
     private String status;
 
     /** MQ 消息发送时间 */
-    private LocalDateTime sendTime;
+    @JsonFormat(timezone = "GMT+8", pattern = "yyyy-MM-dd HH:mm:ss")
+    @DateTimeFormat(pattern = "yyyy-MM-dd HH:mm:ss")
+    private Date sendTime;
 
     /** MQ 消息消费时间 */
-    private LocalDateTime consumeTime;
+    @JsonFormat(timezone = "GMT+8", pattern = "yyyy-MM-dd HH:mm:ss")
+    @DateTimeFormat(pattern = "yyyy-MM-dd HH:mm:ss")
+    private Date consumeTime;
 
     /** 备注（失败原因等） */
     private String remark;
@@ -57,13 +63,17 @@ public class LightingPlanExecuteLog {
     private String createBy;
 
     /** 创建时间 */
-    private LocalDateTime createTime;
+    @JsonFormat(timezone = "GMT+8", pattern = "yyyy-MM-dd HH:mm:ss")
+    @DateTimeFormat(pattern = "yyyy-MM-dd HH:mm:ss")
+    private Date createTime;
 
     /** 更新人 */
     private String updateBy;
 
     /** 更新时间 */
-    private LocalDateTime updateTime;
+    @JsonFormat(timezone = "GMT+8", pattern = "yyyy-MM-dd HH:mm:ss")
+    @DateTimeFormat(pattern = "yyyy-MM-dd HH:mm:ss")
+    private Date updateTime;
 
     /** 组织机构编码 */
     private String sysOrgCode;

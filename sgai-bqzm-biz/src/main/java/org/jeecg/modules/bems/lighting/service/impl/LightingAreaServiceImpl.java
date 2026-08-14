@@ -230,6 +230,7 @@ public class LightingAreaServiceImpl extends ServiceImpl<LightingAreaMapper, Lig
      * 构建按区域识别MQ下发消息的匹配器（匹配则命中/删除）：
      * - space=902（1号馆）：消息 GatewayAdr|KnxAdr 命中区域下回路编码提取的 IP|KNX地址
      * - space=903（北区）：消息 GatewayCode-CircuitCode 命中区域下回路编码
+     * - space=904（新灯控）：消息 AreaID（=区域编码 area_code）命中本区域
      * - 其他空间：消息 AreaID（=区域编码）命中本区域
      * @param area 区域
      * @param circuits 区域下回路（可为null，内部按需查询；仅 902/903 需要）
@@ -286,6 +287,21 @@ public class LightingAreaServiceImpl extends ServiceImpl<LightingAreaMapper, Lig
                     JSONObject json = JSONObject.parseObject(new String(body));
                     String fullCode = json.getString("GatewayCode") + "-" + json.getString("CircuitCode");
                     return circuitCodes.contains(fullCode);
+                } catch (Exception e) {
+                    return false;
+                }
+            };
+        }
+        if ("904".equals(space)) {
+            // 904（新灯控）：消息 AreaID = 区域编码（area_code），区域/回路消息都带，按区域编码精确匹配
+            if (StringUtils.isEmpty(area.getAreaCode())) {
+                return null;
+            }
+            final String areaCode = area.getAreaCode();
+            return body -> {
+                try {
+                    String msgAreaId = JSONObject.parseObject(new String(body)).getString("AreaID");
+                    return areaCode.equals(msgAreaId);
                 } catch (Exception e) {
                     return false;
                 }
@@ -431,7 +447,8 @@ public class LightingAreaServiceImpl extends ServiceImpl<LightingAreaMapper, Lig
             throw new JeecgBootException("未找到空间名称为【" + spaceName + "】的区域");
         }
 
-        String value = type ? "1" : "0";
+        // 100=开，0=关（send1hgControl 内部把 100 转 true、0 转 false，传 "1" 会被误转成 false）
+        String value = type ? "100" : "0";
         int sentCount = 0;
         int areaCount = 0;
         for(LightingArea area : areaList){
@@ -488,6 +505,7 @@ public class LightingAreaServiceImpl extends ServiceImpl<LightingAreaMapper, Lig
         return new LambdaQueryWrapper<LightingArea>()
                 .like(StringUtils.isNotEmpty(params.getRelName()), LightingArea::getRelName, params.getRelName())
                 .eq(StringUtils.isNotEmpty(params.getSpace()), LightingArea::getSpace, params.getSpace())
+                .eq(StringUtils.isNotEmpty(params.getSpaceName()), LightingArea::getSpaceName, params.getSpaceName())
                 .like(StringUtils.isNotEmpty(params.getDeviceNo()), LightingArea::getDeviceNo, params.getDeviceNo())
                 .eq(params.getDistrictId() != null, LightingArea::getDistrictId, params.getDistrictId())
                 .like(StringUtils.isNotEmpty(params.getAreaName()), LightingArea::getAreaName, params.getAreaName())
@@ -613,6 +631,9 @@ public class LightingAreaServiceImpl extends ServiceImpl<LightingAreaMapper, Lig
                     queues.add(LightingMqConstant.QUEUE_LIGHTING_SEND_BQ_PREFIX + gatewayCode);
                 }
             }
+        } else if ("904".equals(space)) {
+            // 904（新灯控）：GatewayCode固定54，全部走 lighting_control_bq_54 队列
+            queues.add(LightingMqConstant.QUEUE_LIGHTING_SEND_BQ_54);
         } else {
             // 老空间：区域开/关为整区域场景消息，发到空间对应的单个队列
             String queueName = resolveSpaceQueue(space);
@@ -694,6 +715,9 @@ public class LightingAreaServiceImpl extends ServiceImpl<LightingAreaMapper, Lig
         } else if("903".equals(area.getSpace())){
             // 北区（space=903）走新的MQ转发通道
             controlBq(area, type);
+        } else if("904".equals(area.getSpace())){
+            // 904（新灯控）走新的MQ转发通道，区域级消息（LightDataType=3）
+            control904(area, type);
         } else {
             // 其他空间（金安桥=1、一高炉=2等）走老的KNX通道
             if(type) {
@@ -768,7 +792,8 @@ public class LightingAreaServiceImpl extends ServiceImpl<LightingAreaMapper, Lig
             return;
         }
 
-        String value = type ? "1" : "0";
+        // 100=开，0=关（send1hgControl 内部把 100 转 true、0 转 false，传 "1" 会被误转成 false）
+        String value = type ? "100" : "0";
         log.info("【1号馆】区域控制：areaName={}, 操作={}, 回路数={}", area.getAreaName(), type ? "全开" : "全关", circuitList.size());
 
         for(LightingCircuit circuit : circuitList){
@@ -819,6 +844,23 @@ public class LightingAreaServiceImpl extends ServiceImpl<LightingAreaMapper, Lig
         }
 
         log.info("【北区】区域控制完成：areaName={}, 操作={}", area.getAreaName(), type ? "全开" : "全关");
+    }
+
+    /**
+     * 904空间区域/场景控制（走MQ转发小程序通道）
+     * 区域级消息：DataType=3，仅带 AreaID，不带 CircuitCode；Value：1=开，12=关
+     */
+    private void control904(LightingArea area, boolean type){
+        String value = type ? "1" : "12";
+        log.info("【904】区域控制：areaName={}, 操作={}", area.getAreaName(), type ? "全开" : "全关");
+
+        try {
+            sendService.send904Control(area.getAreaCode(), null, value);
+        } catch (Exception e){
+            log.error("【904】发送区域控制消息失败：areaId={}, areaName={}", area.getId(), area.getAreaName(), e);
+        }
+
+        log.info("【904】区域控制完成：areaName={}, 操作={}", area.getAreaName(), type ? "全开" : "全关");
     }
 
     /**

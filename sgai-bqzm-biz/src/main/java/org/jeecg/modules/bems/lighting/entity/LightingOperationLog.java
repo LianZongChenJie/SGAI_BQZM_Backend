@@ -44,6 +44,10 @@ public class LightingOperationLog {
      */
     public static final String LOG_TYPE_PLAN = "定时任务";
     /**
+     * 日志类型：场景-定时任务（场景类型定时任务执行时，父日志用此类型）
+     */
+    public static final String LOG_TYPE_SCENE_PLAN = "场景-定时任务";
+    /**
      * 日志类型：区域
      */
     public static final String LOG_TYPE_AREA = "区域";

@@ -1,0 +1,38 @@
+package org.jeecg.modules.bems.lighting.service;
+
+import org.jeecg.modules.bems.lighting.vo.EnergyProportionVo;
+import org.jeecg.modules.bems.lighting.vo.EnergyRankItemVo;
+import org.jeecg.modules.bems.lighting.vo.EnergySummaryNodeVo;
+import org.jeecg.modules.bems.lighting.vo.EnergyTrendVo;
+
+import java.util.List;
+
+/**
+ * 能耗统计接口（对应原型"能耗统计"页）
+ */
+public interface ILightingEnergyStatisticsService {
+
+    /**
+     * 能耗排名（今日 kWh，降序 Top N）
+     *
+     * @param level 统计级别：parcel-按地块、zone-按区域、box-按箱子
+     * @param date  日期（yyyy-MM-dd 或 yyyyMMdd），空默认今天
+     * @param top   取前 N 名，空默认 15
+     */
+    List<EnergyRankItemVo> ranking(String level, String date, Integer top);
+
+    /**
+     * 占比（Top5 + 其他）
+     */
+    List<EnergyProportionVo> proportion(String level, String date);
+
+    /**
+     * 逐时趋势（按地块时为 Top5 对比，其他级别为全园单序列）
+     */
+    EnergyTrendVo hourlyTrend(String level, String date);
+
+    /**
+     * 汇总表（地块 → 区域 → 箱子 三层树）
+     */
+    List<EnergySummaryNodeVo> summary(String date);
+}

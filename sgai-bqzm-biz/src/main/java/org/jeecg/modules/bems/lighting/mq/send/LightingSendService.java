@@ -293,6 +293,35 @@ public class LightingSendService {
     }
 
     /**
+     * 发送904空间（新灯控）控制消息（通过MQ转发小程序发给181服务器）
+     * 消息格式：GatewayCode固定54；DataType 3=区域、0=回路；AreaID=区域编码（area_code）；
+     * 回路控制消息需带 CircuitCode（回路号），区域控制不带。
+     * 队列：lighting_control_bq_54（不存在时自动创建）
+     * @param areaCode 区域编码（lighting_area.area_code）
+     * @param circuitCode 回路号（区域控制传null）
+     * @param value 值（回路：100=开、0=关；区域/场景：1=开、12=关）
+     */
+    public void send904Control(String areaCode, String circuitCode, String value) {
+        Map<String, Object> msg = new HashMap<>();
+        msg.put("GatewayCode", "54");
+        msg.put("Value", value);
+        msg.put("AreaID", areaCode);
+        boolean circuit = StringUtils.isNotEmpty(circuitCode);
+        msg.put("DataType", circuit ? "0" : "3");
+        if (circuit) {
+            msg.put("CircuitCode", circuitCode);
+        }
+        String queueName = getOrCreateQueue(LightingMqConstant.QUEUE_LIGHTING_SEND_BQ_54);
+        if (queueName == null) {
+            return;
+        }
+        MessageProperties properties = new MessageProperties();
+        properties.setContentType(MessageProperties.CONTENT_TYPE_JSON);
+        log.info("【904】发送控制消息：{}", JSONObject.toJSONString(msg));
+        rabbitTemplate.send("", queueName, new Message(JSONObject.toJSONString(msg).getBytes(), properties));
+    }
+
+    /**
      * 队列扫描锁：防止同一队列的并发扫描互相干扰（listPage1 统计与撤回共用同一把锁）
      */
     private static final Map<String, Object> QUEUE_SCAN_LOCKS = new ConcurrentHashMap<>();

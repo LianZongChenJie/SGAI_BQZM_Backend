@@ -10,6 +10,7 @@ import org.springframework.stereotype.Service;
 
 import java.time.LocalDateTime;
 import java.time.format.DateTimeFormatter;
+import java.util.Date;
 import java.util.List;
 
 @Service
@@ -29,8 +30,8 @@ public class LightingPlanExecuteLogServiceImpl extends ServiceImpl<LightingPlanE
             data.setExecuteDate(executionTime != null ? executionTime.format(DATE_FORMATTER) : LocalDateTime.now().format(DATE_FORMATTER));
             data.setExecutionTime(executionTime != null ? executionTime.format(TIME_FORMATTER) : null);
             data.setStatus(LightingPlanExecuteLog.STATUS_PENDING);
-            data.setSendTime(LocalDateTime.now());
-            data.setCreateTime(LocalDateTime.now());
+            data.setSendTime(new Date());
+            data.setCreateTime(new Date());
             super.save(data);
         } catch (Exception e) {
             // 记录失败不影响 MQ 发送主流程
@@ -58,9 +59,9 @@ public class LightingPlanExecuteLogServiceImpl extends ServiceImpl<LightingPlanE
             if (pendingList != null && !pendingList.isEmpty()) {
                 LightingPlanExecuteLog data = pendingList.get(0);
                 data.setStatus(targetStatus);
-                data.setConsumeTime(LocalDateTime.now());
+                data.setConsumeTime(new Date());
                 data.setRemark(remark);
-                data.setUpdateTime(LocalDateTime.now());
+                data.setUpdateTime(new Date());
                 super.updateById(data);
             } else {
                 // 无匹配的发送记录（历史消息/记录缺失）：补插一条结果记录，保证日历状态可查
@@ -69,9 +70,9 @@ public class LightingPlanExecuteLogServiceImpl extends ServiceImpl<LightingPlanE
                 data.setVersion(version);
                 data.setExecuteDate(executeDate);
                 data.setStatus(targetStatus);
-                data.setConsumeTime(LocalDateTime.now());
+                data.setConsumeTime(new Date());
                 data.setRemark(remark);
-                data.setCreateTime(LocalDateTime.now());
+                data.setCreateTime(new Date());
                 super.save(data);
             }
         } catch (Exception e) {

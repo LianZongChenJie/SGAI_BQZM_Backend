@@ -27,7 +27,7 @@ public class LightingSpaceDto {
     public static List<LightingSpaceDto> convert(List<LightingArea> areas){
         return areas.stream()
                 .collect(Collectors.toMap(
-                        LightingArea::getSpace,
+                        LightingArea::getSpaceName,
                         area -> {
                             LightingSpaceDto dto = new LightingSpaceDto();
                             dto.setSpaceId(area.getSpace());
@@ -38,7 +38,7 @@ public class LightingSpaceDto {
                 ))
                 .values()
                 .stream()
-                .sorted(Comparator.comparing(LightingSpaceDto::getSpaceId))
+                .sorted(Comparator.comparing(LightingSpaceDto::getSpaceName))
                 .toList();
     }
 }

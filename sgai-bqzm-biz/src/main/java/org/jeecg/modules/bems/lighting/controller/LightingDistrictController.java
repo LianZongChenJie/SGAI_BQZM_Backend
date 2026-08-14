@@ -4,6 +4,8 @@ import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.baomidou.mybatisplus.core.metadata.IPage;
 import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
 import io.swagger.annotations.Api;
+import io.swagger.annotations.ApiImplicitParam;
+import io.swagger.annotations.ApiImplicitParams;
 import io.swagger.annotations.ApiOperation;
 import lombok.AllArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -45,16 +47,26 @@ public class LightingDistrictController {
      * 分页查询片区列表
      */
     @ApiOperation("分页查询片区列表")
+    @ApiImplicitParams({
+            @ApiImplicitParam(name = "pageNo", value = "页码", defaultValue = "1", paramType = "query", dataType = "int"),
+            @ApiImplicitParam(name = "pageSize", value = "每页条数", defaultValue = "10", paramType = "query", dataType = "int"),
+            @ApiImplicitParam(name = "districtName", value = "片区名称", paramType = "query", dataType = "string"),
+            @ApiImplicitParam(name = "districtCode", value = "片区编码", paramType = "query", dataType = "string"),
+            @ApiImplicitParam(name = "status", value = "状态：启用、停用", paramType = "query", dataType = "string"),
+            @ApiImplicitParam(name = "type", value = "类型", paramType = "query", dataType = "string")
+    })
     @GetMapping("/listPage")
     public Result<IPage<LightingDistrict>> listPage(@RequestParam(defaultValue = "1") Integer pageNo,
                                                     @RequestParam(defaultValue = "10") Integer pageSize,
                                                     String districtName,
                                                     String districtCode,
-                                                    String status) {
+                                                    String status,
+                                                    String type) {
         LambdaQueryWrapper<LightingDistrict> queryWrapper = new LambdaQueryWrapper<LightingDistrict>()
                 .like(StringUtils.isNotEmpty(districtName), LightingDistrict::getDistrictName, districtName)
                 .like(StringUtils.isNotEmpty(districtCode), LightingDistrict::getDistrictCode, districtCode)
                 .eq(StringUtils.isNotEmpty(status), LightingDistrict::getStatus, status)
+                .eq(StringUtils.isNotEmpty(type), LightingDistrict::getType, type)
                 .orderByAsc(LightingDistrict::getSort);
         return Result.ok(service.page(new Page<>(pageNo, pageSize), queryWrapper));
     }

@@ -23,6 +23,8 @@ import org.jeecg.modules.bems.lighting.entity.LightingPlan;
 import org.jeecg.modules.bems.lighting.entity.LightingPlanExecuteLog;
 import org.jeecg.modules.bems.lighting.entity.LightingPlanExecutionTime;
 import org.jeecg.modules.bems.lighting.entity.LightingProgram;
+import org.jeecg.modules.bems.lighting.entity.LightingScene;
+import org.jeecg.modules.bems.lighting.entity.LightingSceneDetail;
 import org.jeecg.modules.bems.lighting.mapper.LightingPlanMapper;
 import org.jeecg.modules.bems.lighting.mapper.LightingSceneDetailMapper;
 import org.jeecg.modules.bems.lighting.mq.send.LightingSendService;
@@ -246,15 +248,16 @@ public class LightingPlanServiceImpl extends ServiceImpl<LightingPlanMapper, Lig
             return false;
         }
 
-        // 记录定时任务操作日志（父日志）
+        // 记录定时任务操作日志（父日志）；场景类型用"场景-定时任务"，其余用"定时任务"
         LightingOperationLog planLog = new LightingOperationLog();
-        planLog.setLogType(LightingOperationLog.LOG_TYPE_PLAN);
+        boolean isScenePlan = LightingPlan.REL_TYPE_SCENE.equals(plan.getRelType());
+        planLog.setLogType(isScenePlan ? LightingOperationLog.LOG_TYPE_SCENE_PLAN : LightingOperationLog.LOG_TYPE_PLAN);
         planLog.setParentId(null);
-        planLog.setRelType("定时任务");
+        planLog.setRelType(isScenePlan ? LightingPlan.REL_TYPE_SCENE : "定时任务");
         planLog.setRelId(id);
         planLog.setName(plan.getPlanName());
         planLog.setOperationTime(java.time.LocalDateTime.now());
-        planLog.setOperationType("定时任务" + plan.getOperationType());
+        planLog.setOperationType((isScenePlan ? "场景-定时任务" : "定时任务") + plan.getOperationType());
         planLog.setOperationBy("照明计划");
         planLog.setOperatorType(LightingOperationLog.OPERATOR_TYPE_PLAN);
         lightingOperationLogService.save(planLog);
@@ -266,6 +269,9 @@ public class LightingPlanServiceImpl extends ServiceImpl<LightingPlanMapper, Lig
         }else if(LightingPlan.REL_TYPE_CIRCUIT.equals(plan.getRelType())){
             // 回路
             executeCircuit(relIds, plan.getOperationType(), planLog.getId());
+        }else if(LightingPlan.REL_TYPE_SCENE.equals(plan.getRelType())){
+            // 场景：按各自明细的开关执行，场景引用的节目按 groupId 发泛光节目MQ
+            executeScenePlan(relIds, plan.getOperationType(), planLog.getId());
         }
         return true;
     }
@@ -372,9 +378,48 @@ public class LightingPlanServiceImpl extends ServiceImpl<LightingPlanMapper, Lig
         }
         // 再执行场景引用的节目（按 groupId 发泛光节目MQ，日志挂在父日志下）
         if(CollectionUtil.isNotEmpty(sceneList)){
-            for(org.jeecg.modules.bems.lighting.entity.LightingScene scene : sceneList){
+            for(LightingScene scene : sceneList){
                 executeProgramScenes(scene.getProgramSceneIds(), operationType, parentId, 0);
             }
+        }
+    }
+
+    /**
+     * 场景批量执行：relIds 为场景ID集合（lighting_scene.id）。
+     * 1. 按各自明细的开关执行：遍历场景，对场景明细（区域/回路）按明细自身的 operationType 逐个控制；
+     * 2. 场景引用的节目（programSceneIds）按 groupId 发泛光节目MQ，日志挂在父日志下；
+     * 供定时执行 execution()/手动立即执行 executionNow() 复用。
+     */
+    private void executeScenePlan(Collection<Long> sceneIds, String operationType, Long parentId){
+        if(CollectionUtil.isEmpty(sceneIds)){
+            return;
+        }
+        List<LightingScene> sceneList = lightingSceneService.listByIds(sceneIds);
+        if(sceneList.size() < sceneIds.size()){
+            log.warn("场景计划引用场景 {} 个，实际找到 {} 个，缺失的ID已跳过", sceneIds.size(), sceneList.size());
+        }
+        for(LightingScene scene : sceneList){
+            List<LightingSceneDetail> details = lightingSceneDetailMapper.selectList(
+                    new LambdaQueryWrapper<LightingSceneDetail>()
+                            .eq(LightingSceneDetail::getSceneId, scene.getId())
+                            .orderByAsc(LightingSceneDetail::getSort));
+            // 明细为空但引用了节目时也允许执行
+            if(CollectionUtil.isEmpty(details) && StringUtils.isEmpty(scene.getProgramSceneIds())){
+                log.warn("场景【{}】下没有控制目标，跳过", scene.getSceneName());
+                continue;
+            }
+            // 按各自明细的 operationType 执行（区域/回路各自开或关）
+            for(LightingSceneDetail detail : details){
+                if(LightingScene.REL_TYPE_AREA.equals(detail.getRelType())){
+                    executeArea(Collections.singleton(detail.getRelId()), detail.getOperationType(), parentId);
+                }else if(LightingScene.REL_TYPE_CIRCUIT.equals(detail.getRelType())){
+                    executeCircuit(Collections.singleton(detail.getRelId()), detail.getOperationType(), parentId);
+                }else{
+                    log.warn("场景【{}】明细 relType 非法：{}，已跳过", scene.getSceneName(), detail.getRelType());
+                }
+            }
+            // 场景引用的节目（按 groupId 发泛光节目MQ，日志挂在父日志下）
+            executeProgramScenes(scene.getProgramSceneIds(), operationType, parentId, 0);
         }
     }
     private void check(LightingPlan plan){
@@ -434,10 +479,69 @@ public class LightingPlanServiceImpl extends ServiceImpl<LightingPlanMapper, Lig
                     }
                 }
                 dto.setCircuitList(circuits);
+            } else if (LightingPlan.REL_TYPE_SCENE.equals(plan.getRelType())) {
+                // 查询场景列表，并为每个场景回填明细（区域/回路目标，含名称），供前端直接展示
+                List<LightingScene> scenes = lightingSceneService.listByIds(relIds);
+                if (CollectionUtil.isNotEmpty(scenes)) {
+                    List<Long> sceneIds = scenes.stream().map(LightingScene::getId).collect(Collectors.toList());
+                    List<LightingSceneDetail> allDetails = lightingSceneDetailMapper.selectList(
+                            new LambdaQueryWrapper<LightingSceneDetail>()
+                                    .in(LightingSceneDetail::getSceneId, sceneIds)
+                                    .orderByAsc(LightingSceneDetail::getSort));
+                    fillSceneDetailRelNames(allDetails);
+                    Map<Long, List<LightingSceneDetail>> detailMap = allDetails.stream()
+                            .collect(Collectors.groupingBy(LightingSceneDetail::getSceneId));
+                    for (LightingScene scene : scenes) {
+                        scene.setDetails(detailMap.getOrDefault(scene.getId(), Collections.emptyList()));
+                    }
+                }
+                dto.setSceneList(scenes);
             }
         }
 
         return dto;
+    }
+
+    /**
+     * 回填场景明细的名称：relName 为空时按 relType 从区域/回路表补全（展示用）
+     *
+     * @param details 场景明细列表
+     */
+    private void fillSceneDetailRelNames(List<LightingSceneDetail> details) {
+        if (CollectionUtil.isEmpty(details)) {
+            return;
+        }
+        List<Long> areaIds = new ArrayList<>();
+        List<Long> circuitIds = new ArrayList<>();
+        for (LightingSceneDetail detail : details) {
+            if (LightingScene.REL_TYPE_AREA.equals(detail.getRelType())) {
+                areaIds.add(detail.getRelId());
+            } else if (LightingScene.REL_TYPE_CIRCUIT.equals(detail.getRelType())) {
+                circuitIds.add(detail.getRelId());
+            }
+        }
+        Map<Long, LightingArea> areaMap = CollectionUtil.isNotEmpty(areaIds)
+                ? lightingAreaService.listByIds(areaIds).stream().collect(Collectors.toMap(LightingArea::getId, Function.identity()))
+                : Collections.emptyMap();
+        Map<Long, LightingCircuit> circuitMap = CollectionUtil.isNotEmpty(circuitIds)
+                ? lightingCircuitService.listByIds(circuitIds).stream().collect(Collectors.toMap(LightingCircuit::getId, Function.identity()))
+                : Collections.emptyMap();
+        for (LightingSceneDetail detail : details) {
+            if (StringUtils.isNotEmpty(detail.getRelName())) {
+                continue;
+            }
+            if (LightingScene.REL_TYPE_AREA.equals(detail.getRelType())) {
+                LightingArea area = areaMap.get(detail.getRelId());
+                if (area != null) {
+                    detail.setRelName(area.getAreaName());
+                }
+            } else if (LightingScene.REL_TYPE_CIRCUIT.equals(detail.getRelType())) {
+                LightingCircuit circuit = circuitMap.get(detail.getRelId());
+                if (circuit != null) {
+                    detail.setRelName(circuit.getCircuitName());
+                }
+            }
+        }
     }
 
     /**
@@ -457,15 +561,16 @@ public class LightingPlanServiceImpl extends ServiceImpl<LightingPlanMapper, Lig
             return;
         }
 
-        // 记录定时任务操作日志（父日志）
+        // 记录定时任务操作日志（父日志）；场景类型用"场景-定时任务"，其余用"定时任务"
         LightingOperationLog planLog = new LightingOperationLog();
-        planLog.setLogType(LightingOperationLog.LOG_TYPE_PLAN);
+        boolean isScenePlan = LightingPlan.REL_TYPE_SCENE.equals(plan.getRelType());
+        planLog.setLogType(isScenePlan ? LightingOperationLog.LOG_TYPE_SCENE_PLAN : LightingOperationLog.LOG_TYPE_PLAN);
         planLog.setParentId(null);
-        planLog.setRelType("定时任务");
+        planLog.setRelType(isScenePlan ? LightingPlan.REL_TYPE_SCENE : "定时任务");
         planLog.setRelId(id);
         planLog.setName(plan.getPlanName());
         planLog.setOperationTime(java.time.LocalDateTime.now());
-        planLog.setOperationType("定时任务" + plan.getOperationType());
+        planLog.setOperationType((isScenePlan ? "场景-定时任务" : "定时任务") + plan.getOperationType());
         // 手动立即执行，取当前登录用户
         String operationBy = "照明计划";
         try {
@@ -487,6 +592,9 @@ public class LightingPlanServiceImpl extends ServiceImpl<LightingPlanMapper, Lig
         }else if(LightingPlan.REL_TYPE_CIRCUIT.equals(plan.getRelType())){
             // 回路
             executeCircuit(relIds, plan.getOperationType(), planLog.getId());
+        }else if(LightingPlan.REL_TYPE_SCENE.equals(plan.getRelType())){
+            // 场景：按各自明细的开关执行，场景引用的节目按 groupId 发泛光节目MQ
+            executeScenePlan(relIds, plan.getOperationType(), planLog.getId());
         }
     }
 

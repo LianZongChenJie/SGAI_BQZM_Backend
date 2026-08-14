@@ -3,6 +3,7 @@ package org.jeecg.modules.bems.lighting.dto;
 import lombok.Data;
 import org.jeecg.modules.bems.lighting.entity.LightingArea;
 import org.jeecg.modules.bems.lighting.entity.LightingCircuit;
+import org.jeecg.modules.bems.lighting.entity.LightingScene;
 
 import java.util.List;
 
@@ -74,4 +75,9 @@ public class LightingPlanDetailDto {
      * 关联回路列表（relType=回路时有值）
      */
     private List<LightingCircuit> circuitList;
+
+    /**
+     * 关联场景列表（relType=场景时有值）
+     */
+    private List<LightingScene> sceneList;
 }

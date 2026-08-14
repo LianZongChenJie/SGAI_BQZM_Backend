@@ -28,6 +28,8 @@ public class LightingPlan extends BaseEntity {
 
     public static final String REL_TYPE_CIRCUIT = "回路";
 
+    public static final String REL_TYPE_SCENE = "场景";
+
     public static final String OPERATION_TYPE_OPEN = "开启";
     public static final String OPERATION_TYPE_CLOSE = "关闭";
 
