@@ -66,6 +66,13 @@ public class LightingArea {
     private String status;
 
     /**
+     * 通讯状态：在线、离线（按区域下回路通讯状态汇总，listPage1 时填充）
+     */
+    @TableField(exist = false)
+    @ApiModelProperty(value = "通讯状态：在线、离线")
+    private String comstat;
+
+    /**
      * 上次操作时间
      */
     @TableField(exist = false)

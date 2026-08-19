@@ -104,6 +104,8 @@ public class LightingAreaServiceImpl extends ServiceImpl<LightingAreaMapper, Lig
         fillDistrictName(page.getRecords());
         // 区域状态按区域下回路的实际状态计算（任一回路开启则区域为开启）
         fillStatusByCircuit(page.getRecords());
+        // 区域通讯状态按区域下回路的通讯状态计算（任一回路在线则区域在线）
+        fillComstatByCircuit(page.getRecords());
         // 查询MQ中未被消费的下发消息数，更新待下发消息数字段
         fillPendingMsgCount(page.getRecords());
         return page;
@@ -558,6 +560,35 @@ public class LightingAreaServiceImpl extends ServiceImpl<LightingAreaMapper, Lig
             area.setStatus(openAreaIds.contains(area.getId())
                     ? LightingCircuit.STATUS_ON
                     : LightingCircuit.STATUS_OFF);
+        }
+    }
+
+    /**
+     * 区域通讯状态按区域下回路的通讯状态计算（任一回路在线则区域在线，无回路视为离线）
+     */
+    private void fillComstatByCircuit(List<LightingArea> areas) {
+        if(CollectionUtil.isEmpty(areas)){
+            return;
+        }
+        Set<Long> areaIds = areas.stream()
+                .map(LightingArea::getId)
+                .filter(Objects::nonNull)
+                .collect(Collectors.toSet());
+        if(areaIds.isEmpty()){
+            return;
+        }
+        // 一次性查出这些区域下的所有回路
+        List<LightingCircuit> circuits = circuitService.list(
+                new LambdaQueryWrapper<LightingCircuit>().in(LightingCircuit::getAreaId, areaIds));
+        // 有回路处于在线状态的区域ID集合
+        Set<Long> onlineAreaIds = circuits.stream()
+                .filter(c -> c.getAreaId() != null && LightingCircuit.COMSTAT_ONLINE.equals(c.getComstat()))
+                .map(LightingCircuit::getAreaId)
+                .collect(Collectors.toSet());
+        for(LightingArea area : areas){
+            area.setComstat(onlineAreaIds.contains(area.getId())
+                    ? LightingCircuit.COMSTAT_ONLINE
+                    : LightingCircuit.COMSTAT_OFFLINE);
         }
     }
 

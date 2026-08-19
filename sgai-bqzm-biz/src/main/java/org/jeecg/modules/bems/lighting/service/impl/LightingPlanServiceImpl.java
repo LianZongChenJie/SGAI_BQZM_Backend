@@ -216,6 +216,28 @@ public class LightingPlanServiceImpl extends ServiceImpl<LightingPlanMapper, Lig
     }
 
     /**
+     * 健壮解析 relIds（逗号分隔）：过滤空白、跳过非法ID，可返回空集合。
+     * 避免空字符串/连续逗号导致 Long.parseLong 抛 NumberFormatException 使 MQ 消费失败。
+     */
+    private Set<Long> parseRelIds(String relIds){
+        if(StringUtils.isEmpty(relIds)){
+            return Collections.emptySet();
+        }
+        Set<Long> ids = new HashSet<>();
+        for(String s : relIds.split(",")){
+            if(StringUtils.isBlank(s)){
+                continue;
+            }
+            try{
+                ids.add(Long.parseLong(s.trim()));
+            }catch (NumberFormatException e){
+                log.warn("relIds 包含非法ID，已忽略: {}", s);
+            }
+        }
+        return ids;
+    }
+
+    /**
      * 照明计划执行（MQ 消息消费端调用）
      * @param id 计划id
      * @param version 版本号
@@ -262,7 +284,12 @@ public class LightingPlanServiceImpl extends ServiceImpl<LightingPlanMapper, Lig
         planLog.setOperatorType(LightingOperationLog.OPERATOR_TYPE_PLAN);
         lightingOperationLogService.save(planLog);
 
-        Set<Long> relIds = Arrays.stream(plan.getRelIds().split(",")).map(Long::parseLong).collect(Collectors.toSet());
+        Set<Long> relIds = parseRelIds(plan.getRelIds());
+        if(CollectionUtil.isEmpty(relIds)){
+            // 计划未关联任何控制目标：不执行，但消费成功，避免 MQ 重复重投
+            log.warn("计划【{}】未关联控制目标（relIds为空），跳过执行。计划id：{}", plan.getPlanName(), id);
+            return false;
+        }
         if(LightingPlan.REL_TYPE_AREA.equals(plan.getRelType())){
             // 区域（场景）：含引用节目的场景，节目按 groupId 发泛光节目MQ
             executeAreaWithPrograms(relIds, plan.getOperationType(), planLog.getId());
@@ -386,7 +413,7 @@ public class LightingPlanServiceImpl extends ServiceImpl<LightingPlanMapper, Lig
 
     /**
      * 场景批量执行：relIds 为场景ID集合（lighting_scene.id）。
-     * 1. 按各自明细的开关执行：遍历场景，对场景明细（区域/回路）按明细自身的 operationType 逐个控制；
+     * 1. 按计划的操作类型统一执行：区域/回路全部开或关（忽略明细自身的 operationType，与场景全开/全关语义一致）；
      * 2. 场景引用的节目（programSceneIds）按 groupId 发泛光节目MQ，日志挂在父日志下；
      * 供定时执行 execution()/手动立即执行 executionNow() 复用。
      */
@@ -408,12 +435,12 @@ public class LightingPlanServiceImpl extends ServiceImpl<LightingPlanMapper, Lig
                 log.warn("场景【{}】下没有控制目标，跳过", scene.getSceneName());
                 continue;
             }
-            // 按各自明细的 operationType 执行（区域/回路各自开或关）
+            // 按计划的操作类型统一执行（全开/全关，忽略明细自身的 operationType）
             for(LightingSceneDetail detail : details){
                 if(LightingScene.REL_TYPE_AREA.equals(detail.getRelType())){
-                    executeArea(Collections.singleton(detail.getRelId()), detail.getOperationType(), parentId);
+                    executeArea(Collections.singleton(detail.getRelId()), operationType, parentId);
                 }else if(LightingScene.REL_TYPE_CIRCUIT.equals(detail.getRelType())){
-                    executeCircuit(Collections.singleton(detail.getRelId()), detail.getOperationType(), parentId);
+                    executeCircuit(Collections.singleton(detail.getRelId()), operationType, parentId);
                 }else{
                     log.warn("场景【{}】明细 relType 非法：{}，已跳过", scene.getSceneName(), detail.getRelType());
                 }
@@ -457,9 +484,7 @@ public class LightingPlanServiceImpl extends ServiceImpl<LightingPlanMapper, Lig
 
         // 查询关联信息
         if (StringUtils.isNotEmpty(plan.getRelIds())) {
-            List<Long> relIds = Arrays.stream(plan.getRelIds().split(","))
-                    .map(Long::parseLong)
-                    .collect(Collectors.toList());
+            List<Long> relIds = new ArrayList<>(parseRelIds(plan.getRelIds()));
 
             if (LightingPlan.REL_TYPE_AREA.equals(plan.getRelType())) {
                 // 查询区域列表
@@ -585,7 +610,10 @@ public class LightingPlanServiceImpl extends ServiceImpl<LightingPlanMapper, Lig
         planLog.setOperatorType(LightingOperationLog.OPERATOR_TYPE_MANUAL);
         lightingOperationLogService.save(planLog);
 
-        Set<Long> relIds = Arrays.stream(plan.getRelIds().split(",")).map(Long::parseLong).collect(Collectors.toSet());
+        Set<Long> relIds = parseRelIds(plan.getRelIds());
+        if(CollectionUtil.isEmpty(relIds)){
+            throw new JeecgBootException("计划未关联控制目标（relIds为空），无法执行");
+        }
         if(LightingPlan.REL_TYPE_AREA.equals(plan.getRelType())){
             // 区域（场景）：含引用节目的场景，节目按 groupId 发泛光节目MQ
             executeAreaWithPrograms(relIds, plan.getOperationType(), planLog.getId());
