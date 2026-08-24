@@ -322,6 +322,35 @@ public class LightingSendService {
     }
 
     /**
+     * 发送905空间（新灯控）区域控制消息（通过MQ转发小程序发给181服务器）
+     * 消息格式：{"DataType":"0","AreaID":"8","Value":"0","GatewayCode":"154.100"}
+     * AreaID=区域编码（lighting_area.area_code）；Value：0=开、1=关；
+     * GatewayCode 固定 154.100。
+     * 队列：lighting_control_bq_154_100（不存在时自动创建）
+     * @param areaCode 区域编码（lighting_area.area_code）
+     * @param value 值（0=开、1=关）
+     */
+    public void send905Control(String areaCode, String value) {
+        if (StringUtils.isEmpty(areaCode)) {
+            log.error("【905】区域编码为空，无法发送控制消息");
+            return;
+        }
+        Map<String, Object> msg = new HashMap<>();
+        msg.put("DataType", "0");
+        msg.put("AreaID", areaCode);
+        msg.put("Value", value);
+        msg.put("GatewayCode", "154.100");
+        String queueName = getOrCreateQueue(LightingMqConstant.QUEUE_LIGHTING_SEND_BQ_905);
+        if (queueName == null) {
+            return;
+        }
+        MessageProperties properties = new MessageProperties();
+        properties.setContentType(MessageProperties.CONTENT_TYPE_JSON);
+        log.info("【905】发送控制消息：{}", JSONObject.toJSONString(msg));
+        rabbitTemplate.send("", queueName, new Message(JSONObject.toJSONString(msg).getBytes(), properties));
+    }
+
+    /**
      * 队列扫描锁：防止同一队列的并发扫描互相干扰（listPage1 统计与撤回共用同一把锁）
      */
     private static final Map<String, Object> QUEUE_SCAN_LOCKS = new ConcurrentHashMap<>();

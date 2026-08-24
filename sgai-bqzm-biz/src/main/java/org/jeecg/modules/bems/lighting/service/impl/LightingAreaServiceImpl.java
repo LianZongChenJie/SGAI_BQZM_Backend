@@ -294,8 +294,8 @@ public class LightingAreaServiceImpl extends ServiceImpl<LightingAreaMapper, Lig
                 }
             };
         }
-        if ("904".equals(space)) {
-            // 904（新灯控）：消息 AreaID = 区域编码（area_code），区域/回路消息都带，按区域编码精确匹配
+        if ("904".equals(space) || "905".equals(space)) {
+            // 904/905（新灯控）：消息 AreaID = 区域编码（area_code），区域/回路消息都带，按区域编码精确匹配
             if (StringUtils.isEmpty(area.getAreaCode())) {
                 return null;
             }
@@ -665,6 +665,9 @@ public class LightingAreaServiceImpl extends ServiceImpl<LightingAreaMapper, Lig
         } else if ("904".equals(space)) {
             // 904（新灯控）：GatewayCode固定54，全部走 lighting_control_bq_54 队列
             queues.add(LightingMqConstant.QUEUE_LIGHTING_SEND_BQ_54);
+        } else if ("905".equals(space)) {
+            // 905（新灯控）：GatewayCode固定154.100，全部走 lighting_control_bq_154_100 队列
+            queues.add(LightingMqConstant.QUEUE_LIGHTING_SEND_BQ_905);
         } else {
             // 老空间：区域开/关为整区域场景消息，发到空间对应的单个队列
             String queueName = resolveSpaceQueue(space);
@@ -749,6 +752,9 @@ public class LightingAreaServiceImpl extends ServiceImpl<LightingAreaMapper, Lig
         } else if("904".equals(area.getSpace())){
             // 904（新灯控）走新的MQ转发通道，区域级消息（LightDataType=3）
             control904(area, type);
+        } else if("905".equals(area.getSpace())){
+            // 905（新灯控）走新的MQ转发通道，区域级消息（DataType=0，AreaID=区域编码）
+            control905(area, type);
         } else {
             // 其他空间（金安桥=1、一高炉=2等）走老的KNX通道
             if(type) {
@@ -892,6 +898,30 @@ public class LightingAreaServiceImpl extends ServiceImpl<LightingAreaMapper, Lig
         }
 
         log.info("【904】区域控制完成：areaName={}, 操作={}", area.getAreaName(), type ? "全开" : "全关");
+    }
+
+    /**
+     * 905（新灯控）区域控制：走新的MQ转发通道（lighting_control_bq_154_100）
+     * 消息格式：{"DataType":"0","AreaID":区域编码,"Value":"0|1","GatewayCode":"154.100"}
+     * AreaID=lighting_area.area_code；Value：0=开、1=关
+     */
+    private void control905(LightingArea area, boolean type){
+        String areaCode = area.getAreaCode();
+        if(StringUtils.isEmpty(areaCode)){
+            log.warn("【905】区域编码为空，无法控制：areaId={}, areaName={}", area.getId(), area.getAreaName());
+            return;
+        }
+        // 0=开、1=关
+        String value = type ? "0" : "1";
+        log.info("【905】区域控制：areaName={}, 操作={}, areaCode={}", area.getAreaName(), type ? "全开" : "全关", areaCode);
+
+        try {
+            sendService.send905Control(areaCode, value);
+        } catch (Exception e){
+            log.error("【905】发送区域控制消息失败：areaId={}, areaName={}, areaCode={}", area.getId(), area.getAreaName(), areaCode, e);
+        }
+
+        log.info("【905】区域控制完成：areaName={}, 操作={}", area.getAreaName(), type ? "全开" : "全关");
     }
 
     /**

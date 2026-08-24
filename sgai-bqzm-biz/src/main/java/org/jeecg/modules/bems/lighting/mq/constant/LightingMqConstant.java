@@ -257,6 +257,11 @@ public class LightingMqConstant {
     public static final String QUEUE_LIGHTING_SEND_BQ_54 = "lighting_control_bq_54";
 
     /**
+     * 905空间（新灯控）控制消息发送队列，GatewayCode 固定 154.100
+     */
+    public static final String QUEUE_LIGHTING_SEND_BQ_905 = "lighting_control_bq_154_100";
+
+    /**
      * 北区（space=903）状态反馈队列
      */
     public static final String QUEUE_LIGHTING_LISTENER_BQ = "lighting_data_bq";
