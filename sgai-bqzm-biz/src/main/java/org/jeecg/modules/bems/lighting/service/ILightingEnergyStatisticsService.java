@@ -1,5 +1,6 @@
 package org.jeecg.modules.bems.lighting.service;
 
+import org.jeecg.modules.bems.lighting.vo.EnergyMeterReadVo;
 import org.jeecg.modules.bems.lighting.vo.EnergyProportionVo;
 import org.jeecg.modules.bems.lighting.vo.EnergyRankItemVo;
 import org.jeecg.modules.bems.lighting.vo.EnergySummaryNodeVo;
@@ -35,4 +36,15 @@ public interface ILightingEnergyStatisticsService {
      * 汇总表（地块 → 区域 → 箱子 三层树）
      */
     List<EnergySummaryNodeVo> summary(String date);
+
+    /**
+     * 电表读数区间查询（汇总表页签）
+     * 按片区（区域）/箱子（网关）/时间区间，查询每个网关的开始表底、结束表底与累计用电量
+     *
+     * @param districtId 片区ID（可选）
+     * @param gateway    网关编号（可选）
+     * @param startTime  开始时间（yyyy-MM-dd HH:mm:ss，可选）
+     * @param endTime    结束时间（yyyy-MM-dd HH:mm:ss，可选）
+     */
+    List<EnergyMeterReadVo> meterReads(Long districtId, String gateway, String startTime, String endTime);
 }

@@ -9,11 +9,14 @@ import org.jeecg.modules.bems.lighting.entity.LightingArea;
 import org.jeecg.modules.bems.lighting.entity.LightingCircuit;
 import org.jeecg.modules.bems.lighting.entity.LightingDistrict;
 import org.jeecg.modules.bems.lighting.entity.LightingEnergyHour;
+import org.jeecg.modules.bems.lighting.entity.LightingEnergyRead;
+import org.jeecg.modules.bems.lighting.mapper.LightingEnergyReadMapper;
 import org.jeecg.modules.bems.lighting.service.ILightingAreaService;
 import org.jeecg.modules.bems.lighting.service.ILightingCircuitService;
 import org.jeecg.modules.bems.lighting.service.ILightingDistrictService;
 import org.jeecg.modules.bems.lighting.service.ILightingEnergyHourService;
 import org.jeecg.modules.bems.lighting.service.ILightingEnergyStatisticsService;
+import org.jeecg.modules.bems.lighting.vo.EnergyMeterReadVo;
 import org.jeecg.modules.bems.lighting.vo.EnergyProportionVo;
 import org.jeecg.modules.bems.lighting.vo.EnergyRankItemVo;
 import org.jeecg.modules.bems.lighting.vo.EnergySummaryNodeVo;
@@ -23,6 +26,7 @@ import org.springframework.stereotype.Service;
 import java.math.BigDecimal;
 import java.math.RoundingMode;
 import java.time.LocalDate;
+import java.time.LocalDateTime;
 import java.time.format.DateTimeFormatter;
 import java.util.ArrayList;
 import java.util.Arrays;
@@ -60,6 +64,7 @@ public class LightingEnergyStatisticsServiceImpl implements ILightingEnergyStati
     private final ILightingCircuitService circuitService;
     private final ILightingAreaService areaService;
     private final ILightingDistrictService districtService;
+    private final LightingEnergyReadMapper energyReadMapper;
 
     @Override
     public List<EnergyRankItemVo> ranking(String level, String date, Integer top) {
@@ -206,6 +211,147 @@ public class LightingEnergyStatisticsServiceImpl implements ILightingEnergyStati
             result.add(pn);
         }
         return result;
+    }
+
+    @Override
+    public List<EnergyMeterReadVo> meterReads(Long districtId, String gateway, String startTime, String endTime) {
+        LocalDateTime start = parseDateTime(startTime);
+        LocalDateTime end = parseDateTime(endTime);
+        if (start == null && end == null) {
+            // 均未给时间时，默认查询今天 0 点至今
+            end = LocalDateTime.now();
+            start = end.toLocalDate().atStartOfDay();
+        }
+        if (end == null) {
+            end = LocalDateTime.now();
+        }
+        if (start == null) {
+            start = end.minusDays(1);
+        }
+        if (start.isAfter(end)) {
+            LocalDateTime tmp = start;
+            start = end;
+            end = tmp;
+        }
+
+        // 1. 片区下区域集合（districtId 为空或 <=0 表示查询全部片区）
+        List<Long> areaIds = new ArrayList<>();
+        Map<Long, LightingArea> areaMap = new HashMap<>();
+        if (districtId != null && districtId > 0) {
+            List<LightingArea> areas = areaService.list(new LambdaQueryWrapper<LightingArea>()
+                    .eq(LightingArea::getDistrictId, districtId));
+            for (LightingArea a : areas) {
+                areaIds.add(a.getId());
+                areaMap.put(a.getId(), a);
+            }
+        }
+
+        // 2. 查询区间内网关级总表读数
+        List<LightingEnergyRead> reads = energyReadMapper.selectGatewayReads(
+                areaIds.isEmpty() ? null : areaIds, gateway, start, end);
+        if (reads.isEmpty()) {
+            return new ArrayList<>();
+        }
+
+        // 3. 补充区域信息映射：查全部片区时 areaMap 为空，需按读数中出现的 areaId 批量加载
+        if (areaMap.isEmpty()) {
+            Set<Long> readAreaIds = reads.stream()
+                    .map(LightingEnergyRead::getAreaId)
+                    .filter(Objects::nonNull)
+                    .collect(Collectors.toSet());
+            if (!readAreaIds.isEmpty()) {
+                List<LightingArea> readAreas = areaService.listByIds(readAreaIds);
+                for (LightingArea a : readAreas) {
+                    if (a.getId() != null) {
+                        areaMap.put(a.getId(), a);
+                    }
+                }
+            }
+        }
+
+        // 按网关分组（一个网关一块箱子）
+        Map<String, List<LightingEnergyRead>> byGateway = reads.stream()
+                .collect(Collectors.groupingBy(r -> r.getGatewayCode() == null ? "未知" : r.getGatewayCode(),
+                        LinkedHashMap::new, Collectors.toList()));
+
+        Map<Long, LightingArea> finalAreaMap = areaMap;
+        List<EnergyMeterReadVo> result = new ArrayList<>();
+        for (Map.Entry<String, List<LightingEnergyRead>> e : byGateway.entrySet()) {
+            String gw = e.getKey();
+            EnergyMeterReadVo vo = new EnergyMeterReadVo();
+            vo.setGatewayCode(gw);
+            vo.setBoxName(gw + "号网关");
+
+            // 区域信息（取该网关任一条读数的区域）
+            LightingEnergyRead sample = e.getValue().get(0);
+            if (sample.getAreaId() != null) {
+                LightingArea area = finalAreaMap.get(sample.getAreaId());
+                if (area != null) {
+                    vo.setAreaName(area.getAreaName());
+                    vo.setDistrictName(resolveDistrictName(area.getDistrictId()));
+                } else {
+                    vo.setAreaName("区域" + sample.getAreaId());
+                }
+            }
+
+            // 开始表底：开始时间前最近一条
+            LightingEnergyRead startRead = energyReadMapper.selectLastBefore(gw, null, start);
+            // 结束表底：结束时间前最近一条
+            LightingEnergyRead endRead = energyReadMapper.selectLastBefore(gw, null, end);
+
+            if (startRead != null) {
+                vo.setStartTime(startRead.getReadTime());
+                vo.setStartValue(startRead.getValue() == null ? BigDecimal.ZERO : startRead.getValue());
+            } else {
+                vo.setStartTime(start);
+                vo.setStartValue(BigDecimal.ZERO);
+            }
+            if (endRead != null) {
+                vo.setEndTime(endRead.getReadTime());
+                vo.setEndValue(endRead.getValue() == null ? BigDecimal.ZERO : endRead.getValue());
+            } else {
+                vo.setEndTime(end);
+                vo.setEndValue(vo.getStartValue());
+            }
+
+            vo.setTotal(vo.getEndValue().subtract(vo.getStartValue()));
+            if (vo.getTotal().signum() < 0) {
+                vo.setTotal(BigDecimal.ZERO);
+            }
+            result.add(vo);
+        }
+
+        // 按累计用电量降序
+        result.sort((a, b) -> b.getTotal().compareTo(a.getTotal()));
+        return result;
+    }
+
+    /** 解析片区名称 */
+    private String resolveDistrictName(Long districtId) {
+        if (districtId == null) {
+            return null;
+        }
+        LightingDistrict d = districtService.getById(districtId);
+        return d != null ? d.getDistrictName() : "地块" + districtId;
+    }
+
+    /** 解析时间（yyyy-MM-dd HH:mm:ss），解析失败返回 null */
+    private LocalDateTime parseDateTime(String time) {
+        if (StringUtils.isBlank(time)) {
+            return null;
+        }
+        String t = time.trim().replace('T', ' ');
+        try {
+            if (t.contains(" ")) {
+                return LocalDateTime.parse(t, DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss"));
+            }
+            if (t.length() == 10) {
+                return LocalDate.parse(t, DateTimeFormatter.ofPattern("yyyy-MM-dd")).atStartOfDay();
+            }
+            return LocalDateTime.parse(t, DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss"));
+        } catch (Exception e) {
+            return null;
+        }
     }
 
     // ==================== 内部实现 ====================

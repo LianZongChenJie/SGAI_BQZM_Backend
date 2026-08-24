@@ -41,4 +41,26 @@ public interface LightingEnergyReadMapper extends BaseMapper<LightingEnergyRead>
                                           @Param("circuit") String circuit,
                                           @Param("start") LocalDateTime start,
                                           @Param("end") LocalDateTime end);
+
+    /**
+     * 查询指定时间区间内、指定区域集合下的网关级总表读数（去重网关）
+     * circuit_code IS NULL 表示网关级总表读数
+     */
+    @Select("<script>" +
+            "SELECT DISTINCT gateway_code, area_id, read_time, value FROM lighting_energy_read " +
+            "WHERE read_time &gt;= #{start} AND read_time &lt;= #{end} " +
+            "AND COALESCE(circuit_code,'') = '' " +
+            "AND area_id IS NOT NULL " +
+            "<if test='areaIds != null and areaIds.size() > 0'>" +
+            "AND area_id IN " +
+            "<foreach collection='areaIds' item='aid' open='(' separator=',' close=')'>#{aid}</foreach>" +
+            "</if>" +
+            "<if test='gateway != null and gateway != \"\"'>" +
+            "AND gateway_code = #{gateway}" +
+            "</if>" +
+            "</script>")
+    List<LightingEnergyRead> selectGatewayReads(@Param("areaIds") List<Long> areaIds,
+                                                @Param("gateway") String gateway,
+                                                @Param("start") LocalDateTime start,
+                                                @Param("end") LocalDateTime end);
 }

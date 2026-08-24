@@ -7,6 +7,7 @@ import io.swagger.annotations.ApiOperation;
 import lombok.AllArgsConstructor;
 import org.jeecg.common.api.vo.Result;
 import org.jeecg.modules.bems.lighting.service.ILightingEnergyStatisticsService;
+import org.jeecg.modules.bems.lighting.vo.EnergyMeterReadVo;
 import org.jeecg.modules.bems.lighting.vo.EnergyProportionVo;
 import org.jeecg.modules.bems.lighting.vo.EnergyRankItemVo;
 import org.jeecg.modules.bems.lighting.vo.EnergySummaryNodeVo;
@@ -73,5 +74,23 @@ public class LightingEnergyController {
     @GetMapping("/summary")
     public Result<List<EnergySummaryNodeVo>> summary(@RequestParam(required = false) String date) {
         return Result.ok(statisticsService.summary(date));
+    }
+
+    /**
+     * 电表读数区间查询（汇总表页签：按片区/箱子/时间区间查表底与累计用电量）
+     */
+    @ApiOperation("电表读数区间查询（按片区/箱子/时间区间）")
+    @ApiImplicitParams({
+            @ApiImplicitParam(name = "districtId", value = "片区ID", paramType = "query", dataType = "long"),
+            @ApiImplicitParam(name = "gateway", value = "网关编号", paramType = "query", dataType = "string"),
+            @ApiImplicitParam(name = "startTime", value = "开始时间（yyyy-MM-dd HH:mm:ss）", paramType = "query", dataType = "string"),
+            @ApiImplicitParam(name = "endTime", value = "结束时间（yyyy-MM-dd HH:mm:ss）", paramType = "query", dataType = "string")
+    })
+    @GetMapping("/meterReads")
+    public Result<List<EnergyMeterReadVo>> meterReads(@RequestParam(required = false) Long districtId,
+                                                      @RequestParam(required = false) String gateway,
+                                                      @RequestParam(required = false) String startTime,
+                                                      @RequestParam(required = false) String endTime) {
+        return Result.ok(statisticsService.meterReads(districtId, gateway, startTime, endTime));
     }
 }
