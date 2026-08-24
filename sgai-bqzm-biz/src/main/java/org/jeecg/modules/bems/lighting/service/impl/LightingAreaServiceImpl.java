@@ -294,8 +294,8 @@ public class LightingAreaServiceImpl extends ServiceImpl<LightingAreaMapper, Lig
                 }
             };
         }
-        if ("904".equals(space) || "905".equals(space)) {
-            // 904/905（新灯控）：消息 AreaID = 区域编码（area_code），区域/回路消息都带，按区域编码精确匹配
+        if ("904".equals(space)) {
+            // 904（新灯控）：消息 AreaID = 区域编码（area_code），区域/回路消息都带，按区域编码精确匹配
             if (StringUtils.isEmpty(area.getAreaCode())) {
                 return null;
             }
@@ -304,6 +304,33 @@ public class LightingAreaServiceImpl extends ServiceImpl<LightingAreaMapper, Lig
                 try {
                     String msgAreaId = JSONObject.parseObject(new String(body)).getString("AreaID");
                     return areaCode.equals(msgAreaId);
+                } catch (Exception e) {
+                    return false;
+                }
+            };
+        }
+        if ("905".equals(space)) {
+            // 905（新灯控）：发送时 AreaID 从回路表取 circuit_code，回传也按回路编码匹配
+            if (circuits == null) {
+                circuits = circuitService.list(new LambdaQueryWrapper<LightingCircuit>()
+                        .eq(LightingCircuit::getAreaId, area.getId()));
+            }
+            if (CollectionUtil.isEmpty(circuits)) {
+                return null;
+            }
+            Set<String> circuitCodes = new HashSet<>();
+            for (LightingCircuit circuit : circuits) {
+                if (StringUtils.isNotEmpty(circuit.getCircuitCode())) {
+                    circuitCodes.add(circuit.getCircuitCode());
+                }
+            }
+            if (circuitCodes.isEmpty()) {
+                return null;
+            }
+            return body -> {
+                try {
+                    String msgAreaId = JSONObject.parseObject(new String(body)).getString("AreaID");
+                    return circuitCodes.contains(msgAreaId);
                 } catch (Exception e) {
                     return false;
                 }
@@ -903,22 +930,31 @@ public class LightingAreaServiceImpl extends ServiceImpl<LightingAreaMapper, Lig
     /**
      * 905（新灯控）区域控制：走新的MQ转发通道（lighting_control_bq_154_100）
      * 消息格式：{"DataType":"0","AreaID":区域编码,"Value":"0|1","GatewayCode":"154.100"}
-     * AreaID=lighting_area.area_code；Value：0=开、1=关
+     * AreaID=区域下回路编码（lighting_circuit.circuit_code，从回路表取）；Value：0=关、1=开
+     * 说明：905 空间区域与回路一一对应，区域下唯一回路的 circuit_code 即控制编码。
      */
     private void control905(LightingArea area, boolean type){
-        String areaCode = area.getAreaCode();
-        if(StringUtils.isEmpty(areaCode)){
-            log.warn("【905】区域编码为空，无法控制：areaId={}, areaName={}", area.getId(), area.getAreaName());
+        // 从回路表取该区域下唯一回路的编码作为 AreaID
+        List<LightingCircuit> circuits = circuitService.list(new LambdaQueryWrapper<LightingCircuit>()
+                .eq(LightingCircuit::getAreaId, area.getId())
+                .orderByAsc(LightingCircuit::getId));
+        if(CollectionUtil.isEmpty(circuits)){
+            log.warn("【905】区域下无回路，无法控制：areaId={}, areaName={}", area.getId(), area.getAreaName());
             return;
         }
-        // 0=开、1=关
-        String value = type ? "0" : "1";
-        log.info("【905】区域控制：areaName={}, 操作={}, areaCode={}", area.getAreaName(), type ? "全开" : "全关", areaCode);
+        String circuitCode = circuits.get(0).getCircuitCode();
+        if(StringUtils.isEmpty(circuitCode)){
+            log.warn("【905】回路编码为空，无法控制：areaId={}, areaName={}, circuitId={}", area.getId(), area.getAreaName(), circuits.get(0).getId());
+            return;
+        }
+        // 0=关、1=开
+        String value = type ? "1" : "0";
+        log.info("【905】区域控制：areaName={}, 操作={}, circuitCode={}", area.getAreaName(), type ? "全开" : "全关", circuitCode);
 
         try {
-            sendService.send905Control(areaCode, value);
+            sendService.send905Control(circuitCode, value);
         } catch (Exception e){
-            log.error("【905】发送区域控制消息失败：areaId={}, areaName={}, areaCode={}", area.getId(), area.getAreaName(), areaCode, e);
+            log.error("【905】发送区域控制消息失败：areaId={}, areaName={}, circuitCode={}", area.getId(), area.getAreaName(), circuitCode, e);
         }
 
         log.info("【905】区域控制完成：areaName={}, 操作={}", area.getAreaName(), type ? "全开" : "全关");
