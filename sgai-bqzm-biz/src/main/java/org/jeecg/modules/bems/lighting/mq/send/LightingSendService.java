@@ -324,7 +324,7 @@ public class LightingSendService {
     /**
      * 发送905空间（新灯控）区域控制消息（通过MQ转发小程序发给181服务器）
      * 消息格式：{"DataType":"0","AreaID":"8","Value":"0","GatewayCode":"154.100"}
-     * AreaID=区域下回路编码（lighting_circuit.circuit_code）；Value：0=关、1=开；
+     * AreaID=区域下回路编码（lighting_circuit.circuit_code）；Value：0=开、1=关；
      * GatewayCode 固定 154.100。
      * 队列：lighting_control_bq_154_100（不存在时自动创建）
      * @param areaCode 回路编码（lighting_circuit.circuit_code，905 区域下唯一回路的编码）

@@ -388,6 +388,14 @@ public class LightingMsgListener {
             return;
         }
 
+        // 特殊处理：GatewayCode=154.100 + DataType=0（905新灯控的状态消息，无 CircuitCode）
+        // 消息格式：{"DataType":"0","AreaID":"42","Value":"1","GatewayCode":"154.100"}
+        // AreaID=回路编码(circuit_code)；Value：0=开、1=关
+        if("154.100".equals(gatewayCode) && "0".equals(dataType)){
+            handle905StatusMessage(msg);
+            return;
+        }
+
         // 特殊处理：DataType=6 电量累计值（kWh），每分钟一条，存入能耗分钟表
         if("6".equals(dataType)){
             handleEnergyMessage(msg);
@@ -625,6 +633,63 @@ public class LightingMsgListener {
         sendService.sendLightingCircuitComstat("904", areaIdStr, circuitCode);
 
         log.info("【公区904】回路状态更新完成：areaId={}, circuitCode={}, status={}", areaIdStr, circuitCode, status);
+    }
+
+    /**
+     * 特殊处理：GatewayCode=154.100 + DataType=0 的905新灯控状态消息（无 CircuitCode 字段）
+     * 消息格式：{"DataType":"0","AreaID":"42","Value":"1","GatewayCode":"154.100"}
+     * AreaID=区域下唯一回路的回路编码（circuit_code）；Value：0=开、1=关
+     * 按 space=905 + circuit_code=AreaID 匹配回路，更新回路状态（同时维护开关时间、开启总时长）及通讯状态
+     */
+    private void handle905StatusMessage(JSONObject msg){
+        String gatewayCode = msg.getString("GatewayCode");
+        String areaIdStr = msg.getString("AreaID");
+        String value = msg.getString("Value");
+        if(StringUtils.isEmpty(areaIdStr) || StringUtils.isEmpty(value)){
+            log.warn("【公区905】状态消息参数不完整，跳过：msg={}", msg.toJSONString());
+            return;
+        }
+        // 解析状态：0=开、1=关（905 控制值映射：0=全开、1=全关）
+        String status;
+        try {
+            int numValue = Integer.parseInt(value.trim());
+            if(numValue == 0){
+                status = LightingCircuit.STATUS_ON;
+            }else if(numValue == 1){
+                status = LightingCircuit.STATUS_OFF;
+            }else{
+                log.warn("【公区905】状态值异常，跳过：msg={}", msg.toJSONString());
+                return;
+            }
+        } catch (NumberFormatException e) {
+            log.warn("【公区905】状态值异常，跳过：msg={}", msg.toJSONString());
+            return;
+        }
+
+        // AreaID 是回路编码，直接按 space=905 + circuit_code=AreaID 匹配回路
+        LightingCircuit circuit = circuitService.getOne(new LambdaQueryWrapper<LightingCircuit>()
+                .eq(LightingCircuit::getCircuitCode, areaIdStr));
+        if(circuit == null){
+            // 若全局匹配不到，再尝试限定该回路所属区域为 905 空间
+            log.warn("【公区905】未找到对应的回路，AreaID(circuit_code)={}, gatewayCode={}", areaIdStr, gatewayCode);
+            return;
+        }
+        // 校验该回路所属区域为 905 空间，避免 circuit_code 在其他空间重复导致误更新
+        LightingArea area = areaService.getById(circuit.getAreaId());
+        if(area != null && !"905".equals(area.getSpace())){
+            log.warn("【公区905】匹配到的回路不属于 905 空间，跳过：AreaID={}, circuit_code={}, areaName={}, space={}",
+                    areaIdStr, circuit.getCircuitCode(), area.getAreaName(), area.getSpace());
+            return;
+        }
+
+        // 更新回路状态（同时维护开启/关闭时间、开启总时长）
+        circuitService.applyStatus(circuit, status);
+
+        // 更新通讯状态为在线（areaId 用区域主键，circuitCode 用 AreaID）
+        circuitService.updateComstat("905", String.valueOf(circuit.getAreaId()), areaIdStr, LightingCircuit.COMSTAT_ONLINE);
+
+        log.info("【公区905】回路状态更新完成：AreaID={}, circuit_code={}, areaName={}, status={}",
+                areaIdStr, circuit.getCircuitCode(), area != null ? area.getAreaName() : null, status);
     }
 
     /**
