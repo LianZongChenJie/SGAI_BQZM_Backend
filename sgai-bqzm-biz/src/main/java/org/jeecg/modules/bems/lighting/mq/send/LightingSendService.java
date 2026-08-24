@@ -328,7 +328,7 @@ public class LightingSendService {
      * GatewayCode 固定 154.100。
      * 队列：lighting_control_bq_154_100（不存在时自动创建）
      * @param areaCode 回路编码（lighting_circuit.circuit_code，905 区域下唯一回路的编码）
-     * @param value 值（0=关、1=开）
+     * @param value 值（0=开、1=关）
      */
     public void send905Control(String areaCode, String value) {
         if (StringUtils.isEmpty(areaCode)) {

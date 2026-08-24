@@ -930,7 +930,7 @@ public class LightingAreaServiceImpl extends ServiceImpl<LightingAreaMapper, Lig
     /**
      * 905（新灯控）区域控制：走新的MQ转发通道（lighting_control_bq_154_100）
      * 消息格式：{"DataType":"0","AreaID":区域编码,"Value":"0|1","GatewayCode":"154.100"}
-     * AreaID=区域下回路编码（lighting_circuit.circuit_code，从回路表取）；Value：0=关、1=开
+     * AreaID=区域下回路编码（lighting_circuit.circuit_code，从回路表取）；Value：0=开、1=关
      * 说明：905 空间区域与回路一一对应，区域下唯一回路的 circuit_code 即控制编码。
      */
     private void control905(LightingArea area, boolean type){
@@ -947,8 +947,8 @@ public class LightingAreaServiceImpl extends ServiceImpl<LightingAreaMapper, Lig
             log.warn("【905】回路编码为空，无法控制：areaId={}, areaName={}, circuitId={}", area.getId(), area.getAreaName(), circuits.get(0).getId());
             return;
         }
-        // 0=关、1=开
-        String value = type ? "1" : "0";
+        // 0=开、1=关
+        String value = type ? "0" : "1";
         log.info("【905】区域控制：areaName={}, 操作={}, circuitCode={}", area.getAreaName(), type ? "全开" : "全关", circuitCode);
 
         try {
