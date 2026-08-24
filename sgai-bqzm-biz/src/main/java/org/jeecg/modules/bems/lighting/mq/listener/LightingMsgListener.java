@@ -26,6 +26,7 @@ import java.math.BigDecimal;
 import java.time.LocalDateTime;
 import java.time.format.DateTimeFormatter;
 import java.util.List;
+import java.util.stream.Collectors;
 
 @RabbitComponent(value = "LightingMsgListener")
 @Slf4j
@@ -639,7 +640,8 @@ public class LightingMsgListener {
      * 特殊处理：GatewayCode=154.100 + DataType=0 的905新灯控状态消息（无 CircuitCode 字段）
      * 消息格式：{"DataType":"0","AreaID":"42","Value":"1","GatewayCode":"154.100"}
      * AreaID=区域下唯一回路的回路编码（circuit_code）；Value：0=开、1=关
-     * 按 space=905 + circuit_code=AreaID 匹配回路，更新回路状态（同时维护开关时间、开启总时长）及通讯状态
+     * 先按 area_code=GatewayCode 查询区域得到 id 集合，再按 area_id IN (id集合) + circuit_code=AreaID
+     * 匹配回路，更新回路状态（同时维护开关时间、开启总时长）及通讯状态
      */
     private void handle905StatusMessage(JSONObject msg){
         String gatewayCode = msg.getString("GatewayCode");
@@ -666,21 +668,24 @@ public class LightingMsgListener {
             return;
         }
 
-        // AreaID 是回路编码，直接按 space=905 + circuit_code=AreaID 匹配回路
+        // 用 gatewayCode(154.100) 作为 area_code 查询区域列表，拿到 id 集合
+        List<LightingArea> areaList = areaService.list(new LambdaQueryWrapper<LightingArea>()
+                .eq(LightingArea::getAreaCode, gatewayCode));
+        if(areaList == null || areaList.isEmpty()){
+            log.warn("【公区905】未找到 area_code={} 对应的区域，跳过：msg={}", gatewayCode, msg.toJSONString());
+            return;
+        }
+        List<Long> areaIds = areaList.stream().map(LightingArea::getId).collect(Collectors.toList());
+
+        // AreaID 是回路编码，按 area_id IN (区域id集合) + circuit_code=AreaID 匹配回路
         LightingCircuit circuit = circuitService.getOne(new LambdaQueryWrapper<LightingCircuit>()
+                .in(LightingCircuit::getAreaId, areaIds)
                 .eq(LightingCircuit::getCircuitCode, areaIdStr));
         if(circuit == null){
-            // 若全局匹配不到，再尝试限定该回路所属区域为 905 空间
             log.warn("【公区905】未找到对应的回路，AreaID(circuit_code)={}, gatewayCode={}", areaIdStr, gatewayCode);
             return;
         }
-        // 校验该回路所属区域为 905 空间，避免 circuit_code 在其他空间重复导致误更新
         LightingArea area = areaService.getById(circuit.getAreaId());
-        if(area != null && !"905".equals(area.getSpace())){
-            log.warn("【公区905】匹配到的回路不属于 905 空间，跳过：AreaID={}, circuit_code={}, areaName={}, space={}",
-                    areaIdStr, circuit.getCircuitCode(), area.getAreaName(), area.getSpace());
-            return;
-        }
 
         // 更新回路状态（同时维护开启/关闭时间、开启总时长）
         circuitService.applyStatus(circuit, status);
