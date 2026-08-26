@@ -482,12 +482,14 @@ public class LightingMsgListener {
             // 更新回路状态（同时维护开启/关闭时间、开启总时长）
             circuitService.applyStatus(circuit, status);
 
-            // 通过 area_id 查区域，拿到 space
+            // 通过 area_id 查区域，拿到 space 和 area_code
             LightingArea area = areaService.getById(circuit.getAreaId());
             String space = area != null ? area.getSpace() : "";
+            // updateComstat 内部按 area_code 字段匹配区域，故传入区域编码（不能传主键 id）
+            String areaCode = area != null && area.getAreaCode() != null ? area.getAreaCode() : String.valueOf(circuit.getAreaId());
 
             // 更新通讯状态为在线
-            circuitService.updateComstat(space, String.valueOf(circuit.getAreaId()), circuit.getCircuitCode(), LightingCircuit.COMSTAT_ONLINE);
+            circuitService.updateComstat(space, areaCode, circuit.getCircuitCode(), LightingCircuit.COMSTAT_ONLINE);
 
             // 发送离线延迟消息
             sendService.sendLightingCircuitComstat(space, String.valueOf(circuit.getAreaId()), circuit.getCircuitCode());
@@ -497,7 +499,9 @@ public class LightingMsgListener {
             // 状态异常，设置为离线
             LightingArea area = areaService.getById(circuit.getAreaId());
             String space = area != null ? area.getSpace() : "";
-            circuitService.updateComstat(space, String.valueOf(circuit.getAreaId()), circuit.getCircuitCode(), LightingCircuit.COMSTAT_OFFLINE);
+            // updateComstat 内部按 area_code 字段匹配区域，故传入区域编码（不能传主键 id）
+            String areaCode = area != null && area.getAreaCode() != null ? area.getAreaCode() : String.valueOf(circuit.getAreaId());
+            circuitService.updateComstat(space, areaCode, circuit.getCircuitCode(), LightingCircuit.COMSTAT_OFFLINE);
             log.warn("【北区】状态值异常，设置为离线：circuit_code={}, value={}", fullCircuitCode, value);
         }
     }
@@ -695,14 +699,14 @@ public class LightingMsgListener {
         }
         LightingArea area = areaService.getById(circuit.getAreaId());
 
-        // 更新回路状态（同时维护开启/关闭时间、开启总时长）
+        // 更新通讯状态为在线（与状态一起落库，避免 updateComstat 按 area_code 匹配不到）
+        circuit.setComstat(LightingCircuit.COMSTAT_ONLINE);
+
+        // 更新回路状态（同时维护开启/关闭时间、开启总时长、通讯状态）
         circuitService.applyStatus(circuit, status);
 
-        // 更新通讯状态为在线（areaId 用区域主键，circuitCode 用 AreaID）
-        circuitService.updateComstat("905", String.valueOf(circuit.getAreaId()), areaIdStr, LightingCircuit.COMSTAT_ONLINE);
-
-        log.info("【公区905】回路状态更新完成：AreaID={}, circuit_code={}, areaName={}, status={}",
-                areaIdStr, circuit.getCircuitCode(), area != null ? area.getAreaName() : null, status);
+        log.info("【公区905】回路状态更新完成：AreaID={}, circuit_code={}, areaName={}, status={}, comstat={}",
+                areaIdStr, circuit.getCircuitCode(), area != null ? area.getAreaName() : null, status, circuit.getComstat());
     }
 
     /**
@@ -755,14 +759,14 @@ public class LightingMsgListener {
         }
         LightingArea area = areaService.getById(circuit.getAreaId());
 
-        // 更新回路状态（同时维护开启/关闭时间、开启总时长）
+        // 更新通讯状态为在线（与状态一起落库，避免 updateComstat 按 area_code 匹配不到）
+        circuit.setComstat(LightingCircuit.COMSTAT_ONLINE);
+
+        // 更新回路状态（同时维护开启/关闭时间、开启总时长、通讯状态）
         circuitService.applyStatus(circuit, status);
 
-        // 更新通讯状态为在线（areaId 用区域主键，circuitCode 用 AreaID）
-        circuitService.updateComstat("906", String.valueOf(circuit.getAreaId()), areaIdStr, LightingCircuit.COMSTAT_ONLINE);
-
-        log.info("【公区906】回路状态更新完成：AreaID={}, circuit_code={}, areaName={}, status={}",
-                areaIdStr, circuit.getCircuitCode(), area != null ? area.getAreaName() : null, status);
+        log.info("【公区906】回路状态更新完成：AreaID={}, circuit_code={}, areaName={}, status={}, comstat={}",
+                areaIdStr, circuit.getCircuitCode(), area != null ? area.getAreaName() : null, status, circuit.getComstat());
     }
 
     /**
