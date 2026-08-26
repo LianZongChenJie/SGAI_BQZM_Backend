@@ -336,6 +336,33 @@ public class LightingAreaServiceImpl extends ServiceImpl<LightingAreaMapper, Lig
                 }
             };
         }
+        if ("906".equals(space)) {
+            // 906（新灯控）：发送时 AreaID 从回路表取 circuit_code，回传也按回路编码匹配
+            if (circuits == null) {
+                circuits = circuitService.list(new LambdaQueryWrapper<LightingCircuit>()
+                        .eq(LightingCircuit::getAreaId, area.getId()));
+            }
+            if (CollectionUtil.isEmpty(circuits)) {
+                return null;
+            }
+            Set<String> circuitCodes = new HashSet<>();
+            for (LightingCircuit circuit : circuits) {
+                if (StringUtils.isNotEmpty(circuit.getCircuitCode())) {
+                    circuitCodes.add(circuit.getCircuitCode());
+                }
+            }
+            if (circuitCodes.isEmpty()) {
+                return null;
+            }
+            return body -> {
+                try {
+                    String msgAreaId = JSONObject.parseObject(new String(body)).getString("AreaID");
+                    return circuitCodes.contains(msgAreaId);
+                } catch (Exception e) {
+                    return false;
+                }
+            };
+        }
         // 老空间：消息 AreaID = 区域编码（数值），匹配本区域
         if (!area.getAreaCode().matches("\\d+")) {
             return null;
@@ -695,6 +722,9 @@ public class LightingAreaServiceImpl extends ServiceImpl<LightingAreaMapper, Lig
         } else if ("905".equals(space)) {
             // 905（新灯控）：GatewayCode固定154.100，全部走 lighting_control_bq_154_100 队列
             queues.add(LightingMqConstant.QUEUE_LIGHTING_SEND_BQ_905);
+        } else if ("906".equals(space)) {
+            // 906（新灯控）：GatewayCode固定154.2，全部走 lighting_control_bq_154_2 队列
+            queues.add(LightingMqConstant.QUEUE_LIGHTING_SEND_BQ_906);
         } else {
             // 老空间：区域开/关为整区域场景消息，发到空间对应的单个队列
             String queueName = resolveSpaceQueue(space);
@@ -782,6 +812,9 @@ public class LightingAreaServiceImpl extends ServiceImpl<LightingAreaMapper, Lig
         } else if("905".equals(area.getSpace())){
             // 905（新灯控）走新的MQ转发通道，区域级消息（DataType=0，AreaID=区域编码）
             control905(area, type);
+        } else if("906".equals(area.getSpace())){
+            // 906（新灯控）走新的MQ转发通道，区域级消息（DataType=0，AreaID=区域编码）
+            control906(area, type);
         } else {
             // 其他空间（金安桥=1、一高炉=2等）走老的KNX通道
             if(type) {
@@ -962,6 +995,42 @@ public class LightingAreaServiceImpl extends ServiceImpl<LightingAreaMapper, Lig
         }
 
         log.info("【905】区域控制完成：areaName={}, 操作={}, 共发送 {} 个回路", area.getAreaName(), type ? "全开" : "全关", sendCount);
+    }
+
+    /**
+     * 906（新灯控）区域控制：走新的MQ转发通道（lighting_control_bq_154_2）
+     * 消息格式：{"DataType":"0","AreaID":区域编码,"Value":"1|2","GatewayCode":"154.2"}
+     * AreaID=区域下回路编码（lighting_circuit.circuit_code，从回路表取）；Value：1=开、2=关
+     * 说明：906 空间一个区域对应一个回路（也可能多个），控制时遍历该区域下所有回路逐个发送。
+     */
+    private void control906(LightingArea area, boolean type){
+        // 从回路表取该区域下的所有回路编码作为 AreaID（支持一个区域下多个回路）
+        List<LightingCircuit> circuits = circuitService.list(new LambdaQueryWrapper<LightingCircuit>()
+                .eq(LightingCircuit::getAreaId, area.getId())
+                .orderByAsc(LightingCircuit::getId));
+        if(CollectionUtil.isEmpty(circuits)){
+            log.warn("【906】区域下无回路，无法控制：areaId={}, areaName={}", area.getId(), area.getAreaName());
+            return;
+        }
+        // 1=开、2=关
+        String value = type ? "1" : "2";
+        int sendCount = 0;
+        for (LightingCircuit circuit : circuits) {
+            String circuitCode = circuit.getCircuitCode();
+            if(StringUtils.isEmpty(circuitCode)){
+                log.warn("【906】回路编码为空，跳过该回路：areaId={}, areaName={}, circuitId={}", area.getId(), area.getAreaName(), circuit.getId());
+                continue;
+            }
+            log.info("【906】区域控制：areaName={}, 操作={}, circuitCode={}", area.getAreaName(), type ? "全开" : "全关", circuitCode);
+            try {
+                sendService.send906Control(circuitCode, value);
+                sendCount++;
+            } catch (Exception e){
+                log.error("【906】发送区域控制消息失败：areaId={}, areaName={}, circuitCode={}", area.getId(), area.getAreaName(), circuitCode, e);
+            }
+        }
+
+        log.info("【906】区域控制完成：areaName={}, 操作={}, 共发送 {} 个回路", area.getAreaName(), type ? "全开" : "全关", sendCount);
     }
 
     /**

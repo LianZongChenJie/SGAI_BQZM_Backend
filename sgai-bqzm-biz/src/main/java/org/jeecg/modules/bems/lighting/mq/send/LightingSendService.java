@@ -351,6 +351,35 @@ public class LightingSendService {
     }
 
     /**
+     * 发送906空间（新灯控）区域控制消息（通过MQ转发小程序发给181服务器）
+     * 消息格式：{"DataType":"0","AreaID":"2","Value":"1","GatewayCode":"154.2"}
+     * AreaID=区域下回路编码（lighting_circuit.circuit_code）；Value：1=开、2=关；
+     * GatewayCode 固定 154.2。
+     * 队列：lighting_control_bq_154_2（不存在时自动创建）
+     * @param areaCode 回路编码（lighting_circuit.circuit_code，906 区域下唯一回路的编码）
+     * @param value 值（1=开、2=关）
+     */
+    public void send906Control(String areaCode, String value) {
+        if (StringUtils.isEmpty(areaCode)) {
+            log.error("【906】区域编码为空，无法发送控制消息");
+            return;
+        }
+        Map<String, Object> msg = new HashMap<>();
+        msg.put("DataType", "0");
+        msg.put("AreaID", areaCode);
+        msg.put("Value", value);
+        msg.put("GatewayCode", "154.2");
+        String queueName = getOrCreateQueue(LightingMqConstant.QUEUE_LIGHTING_SEND_BQ_906);
+        if (queueName == null) {
+            return;
+        }
+        MessageProperties properties = new MessageProperties();
+        properties.setContentType(MessageProperties.CONTENT_TYPE_JSON);
+        log.info("【906】发送控制消息：{}", JSONObject.toJSONString(msg));
+        rabbitTemplate.send("", queueName, new Message(JSONObject.toJSONString(msg).getBytes(), properties));
+    }
+
+    /**
      * 队列扫描锁：防止同一队列的并发扫描互相干扰（listPage1 统计与撤回共用同一把锁）
      */
     private static final Map<String, Object> QUEUE_SCAN_LOCKS = new ConcurrentHashMap<>();
