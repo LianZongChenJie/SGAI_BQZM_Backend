@@ -25,6 +25,12 @@ public interface ILightingAreaService extends IService<LightingArea> {
     void open(Long id, Long parentId);
 
     /**
+     * 批量开启区域照明
+     * @param ids 区域id集合
+     */
+    void openBatch(List<Long> ids);
+
+    /**
      * 撤回区域MQ下发消息：只删除该区域下发、且未被消费的消息（不影响同一队列中其他区域的消息）
      * @param id 区域id
      * @return 撤回的消息总数
@@ -34,6 +40,12 @@ public interface ILightingAreaService extends IService<LightingArea> {
     void close(Long id);
 
     void close(Long id, Long parentId);
+
+    /**
+     * 批量关闭区域照明
+     * @param ids 区域id集合
+     */
+    void closeBatch(List<Long> ids);
 
     void mqControl(String space,String areaCode,String value);
 

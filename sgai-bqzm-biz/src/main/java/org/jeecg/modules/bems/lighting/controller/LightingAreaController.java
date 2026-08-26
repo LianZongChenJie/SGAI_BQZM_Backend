@@ -97,6 +97,28 @@ public class LightingAreaController {
     }
 
     /**
+     * 批量开启
+     * @param ids 区域id集合（如：ids=1&ids=2 或 ids=1,2,3）
+     */
+    @ApiOperation("批量开启区域照明")
+    @PostMapping("/openBatch")
+    public Result<String> openBatch(List<Long> ids){
+        service.openBatch(ids);
+        return Result.ok("批量开启成功");
+    }
+
+    /**
+     * 批量关闭
+     * @param ids 区域id集合（如：ids=1&ids=2 或 ids=1,2,3）
+     */
+    @ApiOperation("批量关闭区域照明")
+    @PostMapping("/closeBatch")
+    public Result<String> closeBatch(List<Long> ids){
+        service.closeBatch(ids);
+        return Result.ok("批量关闭成功");
+    }
+
+    /**
      * 撤回区域MQ下发消息
      * 只删除该区域下发、且未被消费的消息（共享队列不影响其他区域），并把待下发消息数清零
      * @param id 区域id

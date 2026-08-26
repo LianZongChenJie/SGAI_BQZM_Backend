@@ -417,6 +417,20 @@ public class LightingAreaServiceImpl extends ServiceImpl<LightingAreaMapper, Lig
         control(id, true, parentId);
     }
 
+    @Override
+    @Transactional
+    public void openBatch(List<Long> ids) {
+        if(ids == null || ids.isEmpty()){
+            return;
+        }
+        for (Long id : ids) {
+            if(id == null){
+                continue;
+            }
+            control(id, true, null);
+        }
+    }
+
     /**
      * 区域-全关
      * @param id 区域id
@@ -431,6 +445,20 @@ public class LightingAreaServiceImpl extends ServiceImpl<LightingAreaMapper, Lig
     @Transactional
     public void close(Long id, Long parentId) {
         control(id, false, parentId);
+    }
+
+    @Override
+    @Transactional
+    public void closeBatch(List<Long> ids) {
+        if(ids == null || ids.isEmpty()){
+            return;
+        }
+        for (Long id : ids) {
+            if(id == null){
+                continue;
+            }
+            control(id, false, null);
+        }
     }
 
     /**
