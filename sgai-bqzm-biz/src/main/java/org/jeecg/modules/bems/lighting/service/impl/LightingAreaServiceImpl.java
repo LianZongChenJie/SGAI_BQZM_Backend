@@ -102,14 +102,17 @@ public class LightingAreaServiceImpl extends ServiceImpl<LightingAreaMapper, Lig
         LambdaQueryWrapper<LightingArea> queryWrapper = buildQueryWrapper(params);
         IPage<LightingArea> page = super.page(new Page<>(params.getPageNo(), params.getPageSize()),queryWrapper);
         fillDistrictName(page.getRecords());
+        // 一次性查出当前页区域下的所有回路，供下面三个填充方法复用（避免各自重复查询）
+        List<LightingCircuit> areaCircuits = queryCircuitsByAreaIds(page.getRecords());
         // 区域状态按区域下回路的实际状态计算（任一回路开启则区域为开启）
-        fillStatusByCircuit(page.getRecords());
+        fillStatusByCircuit(page.getRecords(), areaCircuits);
         // 区域通讯状态按区域下回路的通讯状态计算（任一回路在线则区域在线）
-        fillComstatByCircuit(page.getRecords());
+        fillComstatByCircuit(page.getRecords(), areaCircuits);
         // 查询MQ中未被消费的下发消息数，更新待下发消息数字段
-        fillPendingMsgCount(page.getRecords());
+        fillPendingMsgCount(page.getRecords(), areaCircuits);
         return page;
     }
+
 
     @Override
     public List<LightingArea> list() {
@@ -616,23 +619,41 @@ public class LightingAreaServiceImpl extends ServiceImpl<LightingAreaMapper, Lig
     }
 
     /**
-     * 区域状态按回路实际状态计算：区域下任一回路为"开启"则区域为"开启"，否则为"关闭"。
-     * （与 /bems/lighting/circuit/listPage?areaId=xx 返回的回路状态保持一致，只改出参不落库）
+     * 一次性查询指定区域集合下的所有回路（供列表页多个填充方法复用）
+     * @param areas 区域集合
+     * @return 这些区域下的所有回路；区域为空时返回空列表
      */
-    private void fillStatusByCircuit(List<LightingArea> areas) {
+    private List<LightingCircuit> queryCircuitsByAreaIds(List<LightingArea> areas) {
         if(CollectionUtil.isEmpty(areas)){
-            return;
+            return Collections.emptyList();
         }
         Set<Long> areaIds = areas.stream()
                 .map(LightingArea::getId)
                 .filter(Objects::nonNull)
                 .collect(Collectors.toSet());
         if(areaIds.isEmpty()){
+            return Collections.emptyList();
+        }
+        return circuitService.list(new LambdaQueryWrapper<LightingCircuit>().in(LightingCircuit::getAreaId, areaIds));
+    }
+
+    /**
+     * 区域状态按回路实际状态计算：区域下任一回路为"开启"则区域为"开启"，否则为"关闭"。
+     * （与 /bems/lighting/circuit/listPage?areaId=xx 返回的回路状态保持一致，只改出参不落库）
+     * @param areas 区域集合
+     * @param circuits 这些区域下的所有回路（由调用方一次性查出，避免重复查询）
+     */
+    private void fillStatusByCircuit(List<LightingArea> areas, List<LightingCircuit> circuits) {
+        if(CollectionUtil.isEmpty(areas)){
             return;
         }
-        // 一次性查出这些区域下的所有回路
-        List<LightingCircuit> circuits = circuitService.list(
-                new LambdaQueryWrapper<LightingCircuit>().in(LightingCircuit::getAreaId, areaIds));
+        if(CollectionUtil.isEmpty(circuits)){
+            // 无回路：全部区域置为关闭
+            for(LightingArea area : areas){
+                area.setStatus(LightingCircuit.STATUS_OFF);
+            }
+            return;
+        }
         // 有回路处于开启状态的区域ID集合
         Set<Long> openAreaIds = circuits.stream()
                 .filter(c -> c.getAreaId() != null && LightingCircuit.STATUS_ON.equals(c.getStatus()))
@@ -647,21 +668,20 @@ public class LightingAreaServiceImpl extends ServiceImpl<LightingAreaMapper, Lig
 
     /**
      * 区域通讯状态按区域下回路的通讯状态计算（任一回路在线则区域在线，无回路视为离线）
+     * @param areas 区域集合
+     * @param circuits 这些区域下的所有回路（由调用方一次性查出，避免重复查询）
      */
-    private void fillComstatByCircuit(List<LightingArea> areas) {
+    private void fillComstatByCircuit(List<LightingArea> areas, List<LightingCircuit> circuits) {
         if(CollectionUtil.isEmpty(areas)){
             return;
         }
-        Set<Long> areaIds = areas.stream()
-                .map(LightingArea::getId)
-                .filter(Objects::nonNull)
-                .collect(Collectors.toSet());
-        if(areaIds.isEmpty()){
+        if(CollectionUtil.isEmpty(circuits)){
+            // 无回路：全部区域视为离线
+            for(LightingArea area : areas){
+                area.setComstat(LightingCircuit.COMSTAT_OFFLINE);
+            }
             return;
         }
-        // 一次性查出这些区域下的所有回路
-        List<LightingCircuit> circuits = circuitService.list(
-                new LambdaQueryWrapper<LightingCircuit>().in(LightingCircuit::getAreaId, areaIds));
         // 有回路处于在线状态的区域ID集合
         Set<Long> onlineAreaIds = circuits.stream()
                 .filter(c -> c.getAreaId() != null && LightingCircuit.COMSTAT_ONLINE.equals(c.getComstat()))
@@ -683,18 +703,12 @@ public class LightingAreaServiceImpl extends ServiceImpl<LightingAreaMapper, Lig
      * - space=903（北区）：lighting_control_bq_XX（按区域下各回路编码前缀的网关编号）
      * - 其他空间：按空间对应的单个队列
      */
-    private void fillPendingMsgCount(List<LightingArea> areas) {
+    private void fillPendingMsgCount(List<LightingArea> areas, List<LightingCircuit> circuits) {
         if (CollectionUtil.isEmpty(areas)) {
             return;
         }
-        Set<Long> areaIds = areas.stream()
-                .map(LightingArea::getId)
-                .filter(Objects::nonNull)
-                .collect(Collectors.toSet());
-        // 一次查出当前页区域下的所有回路（北区903需要按回路编码解析网关队列）
-        List<LightingCircuit> circuits = CollectionUtil.isEmpty(areaIds) ? Collections.emptyList()
-                : circuitService.list(new LambdaQueryWrapper<LightingCircuit>().in(LightingCircuit::getAreaId, areaIds));
-        Map<Long, List<LightingCircuit>> circuitsByArea = circuits.stream()
+        // circuits 由调用方一次性查出并传入，这里仅按区域分组复用
+        Map<Long, List<LightingCircuit>> circuitsByArea = (circuits == null ? Collections.<LightingCircuit>emptyList() : circuits).stream()
                 .filter(c -> c.getAreaId() != null)
                 .collect(Collectors.groupingBy(LightingCircuit::getAreaId));
 
