@@ -1,15 +1,22 @@
 package org.jeecg.modules.bems.lighting.controller;
 
+import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import io.swagger.annotations.Api;
 import io.swagger.annotations.ApiOperation;
 import lombok.AllArgsConstructor;
 import org.apache.commons.lang3.StringUtils;
 import org.jeecg.common.api.vo.Result;
+import org.jeecg.modules.bems.lighting.entity.LightingArea;
+import org.jeecg.modules.bems.lighting.entity.LightingDistrict;
 import org.jeecg.modules.bems.lighting.entity.LightingVideoMonitor;
+import org.jeecg.modules.bems.lighting.service.ILightingAreaService;
+import org.jeecg.modules.bems.lighting.service.ILightingDistrictService;
 import org.jeecg.modules.bems.lighting.service.ILightingVideoMonitorService;
 import org.springframework.web.bind.annotation.*;
 
+import java.util.ArrayList;
 import java.util.Collections;
+import java.util.List;
 
 /**
  * 视频监控
@@ -21,6 +28,10 @@ import java.util.Collections;
 public class LightingVideoMonitorController {
 
     private final ILightingVideoMonitorService service;
+
+    private final ILightingDistrictService districtService;
+
+    private final ILightingAreaService areaService;
 
     /**
      * 分页查询视频监控
@@ -40,6 +51,50 @@ public class LightingVideoMonitorController {
     @GetMapping("/list")
     public Result<?> list() {
         return Result.ok(service.list());
+    }
+
+    /**
+     * 获取所有视频列表（数据来源：lighting_district(type=1) 与 lighting_area 合并，不查 lighting_video_monitor）
+     * 名称取片区名称/区域名称，视频地址取 monitorAdr，仅返回有监控地址的记录。
+     */
+    @ApiOperation("获取所有视频列表（片区type=1 + 区域合并）")
+    @GetMapping("/listAll")
+    public Result<List<LightingVideoMonitor>> listAll() {
+        List<LightingVideoMonitor> result = new ArrayList<>();
+
+        // 片区：type=1 且有监控地址
+        districtService.list(new LambdaQueryWrapper<LightingDistrict>()
+                        .eq(LightingDistrict::getType, "1")
+                        .isNotNull(LightingDistrict::getMonitorAdr))
+                .forEach(d -> {
+                    if (StringUtils.isNotBlank(d.getMonitorAdr())) {
+                        result.add(buildMonitor(d.getId(), d.getDistrictName(), d.getMonitorAdr()));
+                    }
+                });
+
+        // 区域：有监控地址
+        areaService.list(new LambdaQueryWrapper<LightingArea>()
+                        .isNotNull(LightingArea::getMonitorAdr))
+                .forEach(a -> {
+                    if (StringUtils.isNotBlank(a.getMonitorAdr())) {
+                        result.add(buildMonitor(a.getId(), a.getAreaName(), a.getMonitorAdr()));
+                    }
+                });
+
+        return Result.ok(result);
+    }
+
+    /**
+     * 用原实体组装视频监控数据（videoName=名称，videoAddress=地址，areaId=来源主键）
+     */
+    private LightingVideoMonitor buildMonitor(Long id, String name, String videoAddress) {
+        LightingVideoMonitor monitor = new LightingVideoMonitor();
+        monitor.setId(id);
+        monitor.setAreaId(id);
+        monitor.setAreaName(name);
+        monitor.setVideoName(name);
+        monitor.setVideoAddress(videoAddress);
+        return monitor;
     }
 
     /**

@@ -17,7 +17,7 @@ public class BusinessConfigConstant {
 
     /**
      * 综合预览-控制-全部地块对应的场景id
-     * 待处理报警的数量
+     *
      */
     public static final String PREVIEW_CONTROL_ALL_AREA_SCENEID= "preview:control:allAreaSceneId";
 
