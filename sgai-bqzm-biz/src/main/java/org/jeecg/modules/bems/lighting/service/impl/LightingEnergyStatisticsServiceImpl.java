@@ -19,6 +19,7 @@ import org.jeecg.modules.bems.lighting.service.ILightingEnergyStatisticsService;
 import org.jeecg.modules.bems.lighting.vo.EnergyMeterReadVo;
 import org.jeecg.modules.bems.lighting.vo.EnergyProportionVo;
 import org.jeecg.modules.bems.lighting.vo.EnergyRankItemVo;
+import org.jeecg.modules.bems.lighting.vo.EnergySummaryItemVo;
 import org.jeecg.modules.bems.lighting.vo.EnergySummaryNodeVo;
 import org.jeecg.modules.bems.lighting.vo.EnergyTrendVo;
 import org.springframework.stereotype.Service;
@@ -210,6 +211,63 @@ public class LightingEnergyStatisticsServiceImpl implements ILightingEnergyStati
             pn.setChildren(zns);
             result.add(pn);
         }
+        return result;
+    }
+
+    @Override
+    public List<EnergySummaryItemVo> summaryList(String date, Long districtId, String boxName) {
+        LocalDate day = parseDate(date);
+        String dayStr = day.toString();
+        List<LightingEnergyHour> rows = energyHourService.list(new LambdaQueryWrapper<LightingEnergyHour>()
+                .ge(LightingEnergyHour::getStatDate, day.withDayOfMonth(1).toString())
+                .le(LightingEnergyHour::getStatDate, dayStr));
+        if (rows.isEmpty()) {
+            return Collections.emptyList();
+        }
+        Ctx ctx = buildCtx(rows);
+        List<EnergyAgg> boxes = aggregate(LEVEL_BOX, day, ctx, rows);
+        BigDecimal grandToday = boxes.stream().map(EnergyAgg::getToday).reduce(BigDecimal.ZERO, BigDecimal::add);
+
+        // 过滤条件：片区按 id 精确过滤，箱子名称按模糊匹配
+        String boxCond = StringUtils.isBlank(boxName) ? null : boxName.trim();
+
+        List<EnergySummaryItemVo> result = new ArrayList<>();
+        for (EnergyAgg b : boxes) {
+            // 区域名称
+            String areaNameResolved;
+            Long areaDistrictId = null;
+            if (b.getAreaId() != null) {
+                LightingArea area = ctx.areaMap.get(b.getAreaId());
+                areaNameResolved = area != null ? area.getAreaName() : ("区域" + b.getAreaId());
+                areaDistrictId = area != null ? area.getDistrictId() : null;
+            } else {
+                areaNameResolved = "";
+            }
+            // 网关编号（箱子名：XX号网关）
+            String gatewayCode = b.getGateway() == null ? "未知" : b.getGateway();
+            String boxNameResolved = gatewayCode + "号网关";
+
+            // 按查询条件过滤
+            if (districtId != null && !districtId.equals(areaDistrictId)) {
+                continue;
+            }
+            if (boxCond != null && !boxNameResolved.contains(boxCond)) {
+                continue;
+            }
+
+            EnergySummaryItemVo vo = new EnergySummaryItemVo();
+            vo.setAreaName(areaNameResolved);
+            vo.setBoxName(boxNameResolved);
+            vo.setGatewayCode(gatewayCode);
+            vo.setMeters(b.getGateways().size());
+            vo.setKw(b.getKw().setScale(1, RoundingMode.HALF_UP));
+            vo.setToday(b.getToday().setScale(1, RoundingMode.HALF_UP));
+            vo.setMonth(b.getMonth().setScale(1, RoundingMode.HALF_UP));
+            vo.setRatio(ratio(b.getToday(), grandToday));
+            result.add(vo);
+        }
+        // 按今日用电量降序
+        result.sort((a, b) -> b.getToday().compareTo(a.getToday()));
         return result;
     }
 

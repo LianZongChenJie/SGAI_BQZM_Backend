@@ -10,6 +10,7 @@ import org.jeecg.modules.bems.lighting.service.ILightingEnergyStatisticsService;
 import org.jeecg.modules.bems.lighting.vo.EnergyMeterReadVo;
 import org.jeecg.modules.bems.lighting.vo.EnergyProportionVo;
 import org.jeecg.modules.bems.lighting.vo.EnergyRankItemVo;
+import org.jeecg.modules.bems.lighting.vo.EnergySummaryItemVo;
 import org.jeecg.modules.bems.lighting.vo.EnergySummaryNodeVo;
 import org.jeecg.modules.bems.lighting.vo.EnergyTrendVo;
 import org.springframework.web.bind.annotation.GetMapping;
@@ -74,6 +75,22 @@ public class LightingEnergyController {
     @GetMapping("/summary")
     public Result<List<EnergySummaryNodeVo>> summary(@RequestParam(required = false) String date) {
         return Result.ok(statisticsService.summary(date));
+    }
+
+    /**
+     * 汇总表列表（仅网关维度，一行一个网关），支持按片区、箱子名称过滤
+     */
+    @ApiOperation("能耗汇总表列表（仅网关维度）")
+    @ApiImplicitParams({
+            @ApiImplicitParam(name = "date", value = "日期（yyyy-MM-dd 或 yyyyMMdd），空默认今天", paramType = "query", dataType = "string"),
+            @ApiImplicitParam(name = "districtId", value = "片区id（精确）", paramType = "query", dataType = "long"),
+            @ApiImplicitParam(name = "boxName", value = "箱子名称（模糊）", paramType = "query", dataType = "string")
+    })
+    @GetMapping("/summaryList")
+    public Result<List<EnergySummaryItemVo>> summaryList(@RequestParam(required = false) String date,
+                                                         @RequestParam(required = false) Long districtId,
+                                                         @RequestParam(required = false) String boxName) {
+        return Result.ok(statisticsService.summaryList(date, districtId, boxName));
     }
 
     /**

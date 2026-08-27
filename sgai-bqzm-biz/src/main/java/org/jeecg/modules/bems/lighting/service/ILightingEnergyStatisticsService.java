@@ -3,6 +3,7 @@ package org.jeecg.modules.bems.lighting.service;
 import org.jeecg.modules.bems.lighting.vo.EnergyMeterReadVo;
 import org.jeecg.modules.bems.lighting.vo.EnergyProportionVo;
 import org.jeecg.modules.bems.lighting.vo.EnergyRankItemVo;
+import org.jeecg.modules.bems.lighting.vo.EnergySummaryItemVo;
 import org.jeecg.modules.bems.lighting.vo.EnergySummaryNodeVo;
 import org.jeecg.modules.bems.lighting.vo.EnergyTrendVo;
 
@@ -36,6 +37,16 @@ public interface ILightingEnergyStatisticsService {
      * 汇总表（地块 → 区域 → 箱子 三层树）
      */
     List<EnergySummaryNodeVo> summary(String date);
+
+    /**
+     * 汇总表列表（仅网关维度，一行一个网关）
+     * 由原树结构改为列表形式，支持按片区、箱子名称过滤
+     *
+     * @param date       日期（yyyy-MM-dd 或 yyyyMMdd），空默认今天
+     * @param districtId 片区id（精确过滤，可选）
+     * @param boxName    箱子名称（网关，模糊过滤，可选）
+     */
+    List<EnergySummaryItemVo> summaryList(String date, Long districtId, String boxName);
 
     /**
      * 电表读数区间查询（汇总表页签）
