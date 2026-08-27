@@ -233,7 +233,7 @@ public class LightingEnergyStatisticsServiceImpl implements ILightingEnergyStati
 
         List<EnergySummaryItemVo> result = new ArrayList<>();
         for (EnergyAgg b : boxes) {
-            // 区域名称
+            // 区域名称与所属片区信息
             String areaNameResolved;
             Long areaDistrictId = null;
             if (b.getAreaId() != null) {
@@ -255,8 +255,18 @@ public class LightingEnergyStatisticsServiceImpl implements ILightingEnergyStati
                 continue;
             }
 
+            // 片区名称（与区域名称同时返回，前端按需选用）
+            String districtNameResolved;
+            if (areaDistrictId != null) {
+                LightingDistrict d = ctx.districtMap.get(areaDistrictId);
+                districtNameResolved = d != null ? d.getDistrictName() : ("地块" + areaDistrictId);
+            } else {
+                districtNameResolved = areaNameResolved;
+            }
+
             EnergySummaryItemVo vo = new EnergySummaryItemVo();
             vo.setAreaName(areaNameResolved);
+            vo.setDistrictName(districtNameResolved);
             vo.setBoxName(boxNameResolved);
             vo.setGatewayCode(gatewayCode);
             vo.setMeters(b.getGateways().size());

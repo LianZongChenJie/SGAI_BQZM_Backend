@@ -17,6 +17,9 @@ public class EnergySummaryItemVo {
     @ApiModelProperty(value = "区域名称")
     private String areaName;
 
+    @ApiModelProperty(value = "片区名称")
+    private String districtName;
+
     @ApiModelProperty(value = "箱子名称（如：12号网关）")
     private String boxName;
 
