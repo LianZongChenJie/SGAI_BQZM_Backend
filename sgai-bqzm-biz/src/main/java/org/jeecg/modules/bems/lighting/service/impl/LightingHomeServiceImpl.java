@@ -3,14 +3,11 @@ package org.jeecg.modules.bems.lighting.service.impl;
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import lombok.AllArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.jeecg.modules.bems.constant.BusinessConfigConstant;
 import org.jeecg.modules.bems.lighting.entity.LightingArea;
 import org.jeecg.modules.bems.lighting.entity.LightingCircuit;
 import org.jeecg.modules.bems.lighting.entity.LightingOperationLog;
-import org.jeecg.modules.bems.lighting.service.ILightingAreaService;
-import org.jeecg.modules.bems.lighting.service.ILightingCircuitService;
-import org.jeecg.modules.bems.lighting.service.ILightingHomeService;
-import org.jeecg.modules.bems.lighting.service.ILightingOperationLogService;
-import org.jeecg.modules.bems.lighting.service.LightingService;
+import org.jeecg.modules.bems.lighting.service.*;
 import org.jeecg.modules.bems.lighting.vo.AreaStatisticsVo;
 import org.jeecg.modules.bems.lighting.vo.EnergyStatisticsVo;
 import org.jeecg.modules.bems.lighting.vo.OnlineStatisticsVo;
@@ -33,6 +30,7 @@ public class LightingHomeServiceImpl implements ILightingHomeService {
     private final ILightingCircuitService circuitService;
     private final LightingService lightingService;
     private final ILightingOperationLogService lightingOperationLogService;
+    private final IBusinessConfigService businessConfigService;
 
     @Override
     public AreaStatisticsVo getAreaStatistics() {
@@ -55,7 +53,10 @@ public class LightingHomeServiceImpl implements ILightingHomeService {
         vo.setTotalCount(total);
         vo.setCoveredCount(covered);
         vo.setCoverageRate(calcPercentage(covered, total));
-        vo.setCoverageRate(BigDecimal.valueOf(Long.parseLong("100")));
+        String valueByKey = businessConfigService.getValueByKey(BusinessConfigConstant.PREVIEW_STATISTICS_COVERAGE);
+        vo.setCoverageRate(BigDecimal.valueOf(Long.parseLong(valueByKey)));
+        vo.setPendingAlarm(businessConfigService.getValueByKey(BusinessConfigConstant.PREVIEW_STATISTICS_PENDING_ALARM));
+        vo.setAllAreaSceneId(businessConfigService.getValueByKey(BusinessConfigConstant.PREVIEW_CONTROL_ALL_AREA_SCENEID));
         return vo;
     }
 

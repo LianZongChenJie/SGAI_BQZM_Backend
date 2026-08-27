@@ -21,4 +21,13 @@ public class AreaStatisticsVo {
 
     @ApiModelProperty(value = "已覆盖地块数")
     private Long coveredCount;
+
+    private String pendingAlarm;
+
+    /**
+     * 全部地块对应的场景id
+     */
+    private String allAreaSceneId;
+
+
 }
