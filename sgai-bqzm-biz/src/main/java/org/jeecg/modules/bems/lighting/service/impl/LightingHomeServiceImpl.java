@@ -3,10 +3,13 @@ package org.jeecg.modules.bems.lighting.service.impl;
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import lombok.AllArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.apache.commons.lang3.StringUtils;
 import org.jeecg.modules.bems.constant.BusinessConfigConstant;
 import org.jeecg.modules.bems.lighting.entity.LightingArea;
 import org.jeecg.modules.bems.lighting.entity.LightingCircuit;
 import org.jeecg.modules.bems.lighting.entity.LightingOperationLog;
+import org.jeecg.modules.bems.lighting.entity.LightingSceneDetail;
+import org.jeecg.modules.bems.lighting.mapper.LightingSceneDetailMapper;
 import org.jeecg.modules.bems.lighting.service.*;
 import org.jeecg.modules.bems.lighting.vo.AreaStatisticsVo;
 import org.jeecg.modules.bems.lighting.vo.EnergyStatisticsVo;
@@ -17,6 +20,7 @@ import java.math.BigDecimal;
 import java.math.RoundingMode;
 import java.time.LocalDateTime;
 import java.util.List;
+import java.util.stream.Collectors;
 
 /**
  * 首页概览服务实现
@@ -31,6 +35,7 @@ public class LightingHomeServiceImpl implements ILightingHomeService {
     private final LightingService lightingService;
     private final ILightingOperationLogService lightingOperationLogService;
     private final IBusinessConfigService businessConfigService;
+    private final LightingSceneDetailMapper sceneDetailMapper;
 
     @Override
     public AreaStatisticsVo getAreaStatistics() {
@@ -56,8 +61,32 @@ public class LightingHomeServiceImpl implements ILightingHomeService {
         String valueByKey = businessConfigService.getValueByKey(BusinessConfigConstant.PREVIEW_STATISTICS_COVERAGE);
         vo.setCoverageRate(BigDecimal.valueOf(Long.parseLong(valueByKey)));
         vo.setPendingAlarm(businessConfigService.getValueByKey(BusinessConfigConstant.PREVIEW_STATISTICS_PENDING_ALARM));
-        vo.setAllAreaSceneId(businessConfigService.getValueByKey(BusinessConfigConstant.PREVIEW_CONTROL_ALL_AREA_SCENEID));
+        String valueByKey1 = businessConfigService.getValueByKey(BusinessConfigConstant.PREVIEW_CONTROL_ALL_AREA_SCENEID);
+        vo.setAllAreaSceneId(valueByKey1);
+        // 根据配置的场景id，查询该场景的明细，聚合 relIds/relType（与片区场景查询一致）
+        fillSceneRel(valueByKey1, vo);
         return vo;
+    }
+
+    /**
+     * 根据场景id 查询场景明细，聚合 relIds/relType 填充到 VO：
+     * - relType 取场景下第一条明细的 relType（场景设计上明细类型统一）
+     * - relIds 为场景下所有明细 relId 逗号拼接
+     */
+    private void fillSceneRel(String sceneId, AreaStatisticsVo vo) {
+        if (StringUtils.isEmpty(sceneId)) {
+            return;
+        }
+        List<LightingSceneDetail> details = sceneDetailMapper.selectList(
+                new LambdaQueryWrapper<LightingSceneDetail>()
+                        .eq(LightingSceneDetail::getSceneId, Long.valueOf(sceneId.trim())));
+        if (details.isEmpty()) {
+            return;
+        }
+        vo.setRelType(details.get(0).getRelType());
+        vo.setRelIds(details.stream()
+                .map(d -> String.valueOf(d.getRelId()))
+                .collect(Collectors.joining(",")));
     }
 
     @Override

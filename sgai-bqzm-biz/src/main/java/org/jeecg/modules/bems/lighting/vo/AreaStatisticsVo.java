@@ -28,6 +28,14 @@ public class AreaStatisticsVo {
      * 全部地块对应的场景id
      */
     private String allAreaSceneId;
+    /**
+     * 全部地块 关联ids
+     */
+    private String relIds;
+    /**
+     * 全部地块 关联类型
+     */
+    private String relType;
 
 
 }
