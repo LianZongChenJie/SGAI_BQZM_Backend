@@ -94,6 +94,7 @@ public class LightingVideoMonitorController {
         monitor.setAreaName(name);
         monitor.setVideoName(name);
         monitor.setVideoAddress(videoAddress);
+        monitor.setStatus("在线");
         return monitor;
     }
 
