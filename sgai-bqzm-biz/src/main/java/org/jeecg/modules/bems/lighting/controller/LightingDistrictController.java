@@ -7,6 +7,7 @@ import io.swagger.annotations.Api;
 import io.swagger.annotations.ApiImplicitParam;
 import io.swagger.annotations.ApiImplicitParams;
 import io.swagger.annotations.ApiOperation;
+import cn.hutool.core.collection.CollectionUtil;
 import lombok.AllArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.apache.commons.lang3.StringUtils;
@@ -14,9 +15,13 @@ import org.jeecg.common.api.vo.Result;
 import org.jeecg.modules.bems.lighting.entity.LightingArea;
 import org.jeecg.modules.bems.lighting.entity.LightingCircuit;
 import org.jeecg.modules.bems.lighting.entity.LightingDistrict;
+import org.jeecg.modules.bems.lighting.entity.LightingSceneDetail;
+import org.jeecg.modules.bems.lighting.mapper.LightingSceneDetailMapper;
 import org.jeecg.modules.bems.lighting.service.ILightingAreaService;
 import org.jeecg.modules.bems.lighting.service.ILightingCircuitService;
 import org.jeecg.modules.bems.lighting.service.ILightingDistrictService;
+import org.jeecg.modules.bems.lighting.vo.LightingDistrictVo;
+import org.springframework.beans.BeanUtils;
 import org.springframework.web.bind.annotation.*;
 
 import java.util.Arrays;
@@ -43,6 +48,8 @@ public class LightingDistrictController {
 
     private final ILightingCircuitService circuitService;
 
+    private final LightingSceneDetailMapper sceneDetailMapper;
+
     /**
      * 分页查询片区列表
      */
@@ -56,19 +63,71 @@ public class LightingDistrictController {
             @ApiImplicitParam(name = "type", value = "类型", paramType = "query", dataType = "string")
     })
     @GetMapping("/listPage")
-    public Result<IPage<LightingDistrict>> listPage(@RequestParam(defaultValue = "1") Integer pageNo,
-                                                    @RequestParam(defaultValue = "10") Integer pageSize,
-                                                    String districtName,
-                                                    String districtCode,
-                                                    String status,
-                                                    String type) {
+    public Result<IPage<LightingDistrictVo>> listPage(@RequestParam(defaultValue = "1") Integer pageNo,
+                                                      @RequestParam(defaultValue = "10") Integer pageSize,
+                                                      String districtName,
+                                                      String districtCode,
+                                                      String status,
+                                                      String type) {
         LambdaQueryWrapper<LightingDistrict> queryWrapper = new LambdaQueryWrapper<LightingDistrict>()
                 .like(StringUtils.isNotEmpty(districtName), LightingDistrict::getDistrictName, districtName)
                 .like(StringUtils.isNotEmpty(districtCode), LightingDistrict::getDistrictCode, districtCode)
                 .eq(StringUtils.isNotEmpty(status), LightingDistrict::getStatus, status)
                 .eq(StringUtils.isNotEmpty(type), LightingDistrict::getType, type)
                 .orderByAsc(LightingDistrict::getSort);
-        return Result.ok(service.page(new Page<>(pageNo, pageSize), queryWrapper));
+        Page<LightingDistrict> page = service.page(new Page<>(pageNo, pageSize), queryWrapper);
+
+        // 收集当前页片区的 sceneId 集合（实体为 String），解析为 Long 后批量查询场景明细（避免逐条查询的 N+1）
+        Set<Long> sceneIds = page.getRecords().stream()
+                .map(LightingDistrict::getSceneId)
+                .filter(StringUtils::isNotEmpty)
+                .map(s -> {
+                    try {
+                        return Long.parseLong(s);
+                    } catch (NumberFormatException e) {
+                        return null;
+                    }
+                })
+                .filter(java.util.Objects::nonNull)
+                .collect(Collectors.toSet());
+        // 场景明细按场景id分组，key 统一转字符串，便于与片区 sceneId 直接匹配
+        final Map<String, List<LightingSceneDetail>> detailMap;
+        if (sceneIds.isEmpty()) {
+            detailMap = Collections.emptyMap();
+        } else {
+            detailMap = sceneDetailMapper.selectList(
+                            new LambdaQueryWrapper<LightingSceneDetail>().in(LightingSceneDetail::getSceneId, sceneIds))
+                    .stream()
+                    .collect(Collectors.groupingBy(d -> String.valueOf(d.getSceneId())));
+        }
+
+        // 实体 → VO 数据转换；relType/relIds 从场景明细聚合（与场景详情/列表返回一致）
+        List<LightingDistrictVo> records = page.getRecords().stream().map(district -> {
+            LightingDistrictVo vo = new LightingDistrictVo();
+            BeanUtils.copyProperties(district, vo);
+            fillSceneRel(detailMap.get(district.getSceneId()), vo);
+            return vo;
+        }).collect(Collectors.toList());
+
+        Page<LightingDistrictVo> result = new Page<>(page.getCurrent(), page.getSize(), page.getTotal());
+        result.setRecords(records);
+        return Result.ok(result);
+    }
+
+    /**
+     * 根据场景明细聚合 relType/relIds 并填充到 VO（与场景详情/场景列表返回的数据一致）：
+     * - relType 取场景下第一条明细的 relType（场景设计上明细类型统一）
+     * - relIds 为场景下所有明细 relId 逗号拼接
+     */
+    private void fillSceneRel(List<LightingSceneDetail> details, LightingDistrictVo vo) {
+        if (CollectionUtil.isEmpty(details)) {
+            return;
+        }
+        LightingSceneDetail first = details.get(0);
+        vo.setRelType(first.getRelType());
+        vo.setRelIds(details.stream()
+                .map(d -> String.valueOf(d.getRelId()))
+                .collect(Collectors.joining(",")));
     }
 
     /**

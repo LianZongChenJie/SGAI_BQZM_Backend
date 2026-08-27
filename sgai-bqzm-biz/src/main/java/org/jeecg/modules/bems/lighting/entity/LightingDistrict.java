@@ -104,4 +104,18 @@ public class LightingDistrict {
      */
     @ApiModelProperty(value = "下属区域空间编码集合（逗号分隔，如 1,2,3）")
     private String spaceIds;
+
+
+    /**
+     * 场景id
+     */
+    private String sceneId;
+
+
+    /**
+     * 视频监控地址
+     */
+    private String monitorAdr;
+
+
 }
