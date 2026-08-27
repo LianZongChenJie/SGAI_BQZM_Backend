@@ -153,10 +153,15 @@ public class LightingCircuit {
     private Double voltage;
 
     /**
-     * 电流（A）
+     * 实时电流（A）
      */
     @ApiModelProperty(value = "电流（A）")
     private Double electricCurrent;
+    /**
+     * 额定电流（A）
+     */
+    @ApiModelProperty(value = "额定电流（A）")
+    private Double ratedElectricCurrent;
 
     /**
      * 功率因数
