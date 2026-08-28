@@ -17,6 +17,9 @@ import org.springframework.web.bind.annotation.*;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.List;
+import java.util.Map;
+import java.util.Set;
+import java.util.stream.Collectors;
 
 /**
  * 视频监控
@@ -62,37 +65,49 @@ public class LightingVideoMonitorController {
     public Result<List<LightingVideoMonitor>> listAll() {
         List<LightingVideoMonitor> result = new ArrayList<>();
 
-        // 片区：type=1 且有监控地址
+        // 片区：type=1 且有监控地址；areaName/videoName 均取片区名称，areaId 取片区id
         districtService.list(new LambdaQueryWrapper<LightingDistrict>()
                         .eq(LightingDistrict::getType, "1")
                         .isNotNull(LightingDistrict::getMonitorAdr))
                 .forEach(d -> {
                     if (StringUtils.isNotBlank(d.getMonitorAdr())) {
-                        result.add(buildMonitor(d.getId(), d.getDistrictName(), d.getMonitorAdr()));
+                        result.add(buildMonitor(d.getId(), d.getDistrictName(), d.getDistrictName(), d.getMonitorAdr()));
                     }
                 });
 
-        // 区域：有监控地址
-        areaService.list(new LambdaQueryWrapper<LightingArea>()
-                        .isNotNull(LightingArea::getMonitorAdr))
-                .forEach(a -> {
-                    if (StringUtils.isNotBlank(a.getMonitorAdr())) {
-                        result.add(buildMonitor(a.getId(), a.getAreaName(), a.getMonitorAdr()));
-                    }
-                });
+        // 区域：有监控地址；videoName 取区域名称，areaName 取区域所属片区的名称（通过 district_id 反查），areaId 取区域id
+        List<LightingArea> areas = areaService.list(new LambdaQueryWrapper<LightingArea>()
+                .isNotNull(LightingArea::getMonitorAdr));
+        // 批量反查片区名称，避免 N+1
+        Set<Long> districtIds = areas.stream()
+                .map(LightingArea::getDistrictId)
+                .filter(java.util.Objects::nonNull)
+                .collect(Collectors.toSet());
+        Map<Long, String> districtNameMap = districtIds.isEmpty()
+                ? Collections.emptyMap()
+                : districtService.listByIds(districtIds).stream()
+                        .collect(Collectors.toMap(LightingDistrict::getId, LightingDistrict::getDistrictName, (x, y) -> x));
+
+        for (LightingArea a : areas) {
+            if (StringUtils.isNotBlank(a.getMonitorAdr())) {
+                String districtName = a.getDistrictId() == null ? null : districtNameMap.get(a.getDistrictId());
+                result.add(buildMonitor(a.getId(), a.getAreaName(), districtName, a.getMonitorAdr()));
+            }
+        }
 
         return Result.ok(result);
     }
 
     /**
-     * 用原实体组装视频监控数据（videoName=名称，videoAddress=地址，areaId=来源主键）
+     * 用原实体组装视频监控数据：
+     * areaId=来源主键，videoName=视频名称，areaName=区域（片区）名称，videoAddress=视频地址
      */
-    private LightingVideoMonitor buildMonitor(Long id, String name, String videoAddress) {
+    private LightingVideoMonitor buildMonitor(Long id, String videoName, String areaName, String videoAddress) {
         LightingVideoMonitor monitor = new LightingVideoMonitor();
         monitor.setId(id);
         monitor.setAreaId(id);
-        monitor.setAreaName(name);
-        monitor.setVideoName(name);
+        monitor.setAreaName(areaName);
+        monitor.setVideoName(videoName);
         monitor.setVideoAddress(videoAddress);
         monitor.setStatus("在线");
         return monitor;

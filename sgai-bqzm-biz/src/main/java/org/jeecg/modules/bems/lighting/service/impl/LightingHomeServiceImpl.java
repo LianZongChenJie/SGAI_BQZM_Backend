@@ -55,7 +55,7 @@ public class LightingHomeServiceImpl implements ILightingHomeService {
                 .distinct()
                 .count();
 
-        vo.setTotalCount(total);
+        vo.setTotalCount(businessConfigService.getValueByKey(BusinessConfigConstant.PREVIEW_STATISTICS_LIGHTING_PLOT_NUM));
         vo.setCoveredCount(covered);
         vo.setCoverageRate(calcPercentage(covered, total));
         String valueByKey = businessConfigService.getValueByKey(BusinessConfigConstant.PREVIEW_STATISTICS_COVERAGE);

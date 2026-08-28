@@ -3,6 +3,11 @@ package org.jeecg.modules.bems.constant;
 public class BusinessConfigConstant {
 
     /**
+     * 照明地块数值
+     * 格式  3/7
+     */
+    public static final String PREVIEW_STATISTICS_LIGHTING_PLOT_NUM = "preview:statistics:lightingPlotNum";
+    /**
      * 综合预览-统计-覆盖率
      * 直接填写数值，格式：100
      */

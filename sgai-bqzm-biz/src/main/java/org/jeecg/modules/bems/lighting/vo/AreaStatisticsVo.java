@@ -14,7 +14,7 @@ import java.math.BigDecimal;
 public class AreaStatisticsVo {
 
     @ApiModelProperty(value = "地块总数")
-    private Long totalCount;
+    private String totalCount;
 
     @ApiModelProperty(value = "覆盖度（百分比）")
     private BigDecimal coverageRate;
