@@ -15,6 +15,7 @@ import org.jeecg.modules.bems.lighting.mq.message.LightInfoUpdateLoad;
 import org.jeecg.modules.bems.lighting.mq.message.PowerBoxData;
 import org.jeecg.modules.bems.lighting.mq.send.LightingSendService;
 import org.jeecg.modules.bems.lighting.service.ILightingAreaService;
+import org.jeecg.modules.bems.lighting.service.ILightingBoxTelemetryService;
 import org.jeecg.modules.bems.lighting.service.ILightingCircuitService;
 import org.jeecg.modules.bems.lighting.service.ILightingEnergyReadService;
 import org.jeecg.modules.bems.lighting.service.ILightingPlanExecuteLogService;
@@ -44,6 +45,8 @@ public class LightingMsgListener {
     private final ILightingPlanExecuteLogService planExecuteLogService;
 
     private final ILightingEnergyReadService energyReadService;
+
+    private final ILightingBoxTelemetryService boxTelemetryService;
 
     private final RedisUtil redisUtil;
 
@@ -411,7 +414,16 @@ public class LightingMsgListener {
             return;
         }
 
-
+        // DataType=7：箱子(电箱)遥测数据（交流电压/电流/功率/电量）
+        // 箱子级数据无 CircuitCode/Value，独立处理，不影响其他 DataType 的分流
+        if("7".equals(dataType)){
+            try {
+                boxTelemetryService.saveTelemetry(msg);
+            } catch (Exception e) {
+                log.error("【箱子遥测】处理失败: {}", msg.toJSONString(), e);
+            }
+            return;
+        }
 
         if(StringUtils.isEmpty(gatewayCode) || StringUtils.isEmpty(circuitCode) || StringUtils.isEmpty(value)){
             log.warn("【公区】状态消息参数不完整，跳过");

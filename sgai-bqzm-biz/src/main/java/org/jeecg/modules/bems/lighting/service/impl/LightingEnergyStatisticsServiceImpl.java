@@ -348,16 +348,18 @@ public class LightingEnergyStatisticsServiceImpl implements ILightingEnergyStati
             String gw = e.getKey();
             EnergyMeterReadVo vo = new EnergyMeterReadVo();
             vo.setGatewayCode(gw);
-            vo.setBoxName(gw + "号网关");
 
             // 区域信息（取该网关任一条读数的区域）
             LightingEnergyRead sample = e.getValue().get(0);
             if (sample.getAreaId() != null) {
                 LightingArea area = finalAreaMap.get(sample.getAreaId());
                 if (area != null) {
+                    // 箱子名称展示为区域名称，区域展示为片区名称
+                    vo.setBoxName(area.getAreaName());
                     vo.setAreaName(area.getAreaName());
                     vo.setDistrictName(resolveDistrictName(area.getDistrictId()));
                 } else {
+                    vo.setBoxName("区域" + sample.getAreaId());
                     vo.setAreaName("区域" + sample.getAreaId());
                 }
             }
