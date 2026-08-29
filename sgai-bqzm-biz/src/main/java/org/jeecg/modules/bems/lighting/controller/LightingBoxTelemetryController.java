@@ -9,6 +9,7 @@ import org.jeecg.common.api.vo.Result;
 import org.jeecg.modules.bems.lighting.entity.LightingBoxTelemetry;
 import org.jeecg.modules.bems.lighting.entity.LightingBoxTelemetryHistory;
 import org.jeecg.modules.bems.lighting.service.ILightingBoxTelemetryService;
+import org.jeecg.modules.bems.permission.annotation.DataPermission;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
@@ -33,6 +34,7 @@ public class LightingBoxTelemetryController {
     private static final SimpleDateFormat DF = new SimpleDateFormat("yyyy-MM-dd HH:mm:ss");
 
     @ApiOperation("箱子列表(最新快照)")
+    @DataPermission
     @GetMapping("/list")
     public Result<List<LightingBoxTelemetry>> list() {
         return Result.ok(boxTelemetryService.listBoxes());
@@ -44,6 +46,7 @@ public class LightingBoxTelemetryController {
             @ApiImplicitParam(name = "start", value = "开始时间(yyyy-MM-dd HH:mm:ss)", paramType = "query", dataType = "string"),
             @ApiImplicitParam(name = "end", value = "结束时间(yyyy-MM-dd HH:mm:ss)", paramType = "query", dataType = "string")
     })
+    @DataPermission
     @GetMapping("/history")
     public Result<List<LightingBoxTelemetryHistory>> history(@RequestParam String gatewayCode,
                                                              @RequestParam(required = false) String start,

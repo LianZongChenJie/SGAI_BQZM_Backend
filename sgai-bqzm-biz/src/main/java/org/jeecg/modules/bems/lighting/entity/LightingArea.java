@@ -31,7 +31,6 @@ public class LightingArea {
     /**
      * 空间。金安桥：1；一高炉：2；
      */
-    @DataPermissionField(type = RoleDataPermission.TYPE_LIGHTING, value = "space")
     @ApiModelProperty(value = "空间编码")
     private String space;
 
@@ -198,6 +197,7 @@ public class LightingArea {
     /**
      * 所属片区ID（关联 lighting_district.id）
      */
+    @DataPermissionField(type = RoleDataPermission.TYPE_DISTRICT, value = "district_id")
     @ApiModelProperty(value = "所属片区ID")
     private Long districtId;
 

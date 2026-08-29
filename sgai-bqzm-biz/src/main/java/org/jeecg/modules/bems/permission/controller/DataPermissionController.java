@@ -149,6 +149,38 @@ public class DataPermissionController {
         }
     }
 
+    @ApiOperation(value="为角色分配片区权限", notes="为角色分配单个片区权限（resourceId 为 lighting_district.id）")
+    @PostMapping("/assign/district")
+    @AutoLog(value = "分配片区权限")
+    public Result<String> assignDistrictPermission(
+            @RequestParam String roleCode,
+            @RequestParam Long districtId) {
+        try {
+            permissionService.assignPermission(roleCode, RoleDataPermission.TYPE_DISTRICT, districtId);
+            return Result.ok("片区权限分配成功");
+        } catch (Exception e) {
+            log.error("分配片区权限失败", e);
+            return Result.error("分配失败：" + e.getMessage());
+        }
+    }
+
+    @ApiOperation(value="批量分配片区权限", notes="批量为角色分配多个片区权限，ids为空时清除该角色的所有片区权限")
+    @PostMapping("/assign/district/batch")
+    @AutoLog(value = "批量分配片区权限")
+    public Result<String> batchAssignDistrictPermission(
+            @RequestBody BatchAssignPermissionDto dto) {
+        try {
+            permissionService.batchAssignPermission(dto.getRoleCode(), RoleDataPermission.TYPE_DISTRICT, dto.getIds());
+            if (dto.getIds() == null || dto.getIds().isEmpty()) {
+                return Result.ok("片区权限已清除");
+            }
+            return Result.ok("批量分配片区权限成功，共" + dto.getIds().size() + "个");
+        } catch (Exception e) {
+            log.error("批量分配片区权限失败", e);
+            return Result.error("批量分配失败：" + e.getMessage());
+        }
+    }
+
     @ApiOperation(value="移除角色数据权限", notes="移除角色的指定权限")
     @DeleteMapping("/remove")
     @AutoLog(value = "移除数据权限")

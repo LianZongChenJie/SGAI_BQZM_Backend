@@ -11,6 +11,8 @@ import lombok.Data;
 import lombok.EqualsAndHashCode;
 import lombok.experimental.Accessors;
 
+import org.jeecg.modules.bems.permission.annotation.DataPermissionField;
+import org.jeecg.modules.bems.permission.entity.RoleDataPermission;
 import java.io.Serializable;
 import java.util.Date;
 
@@ -40,6 +42,7 @@ public class LightingBoxTelemetry implements Serializable {
     @ApiModelProperty(value = "区域名称")
     private String areaName;
 
+    @DataPermissionField(type = RoleDataPermission.TYPE_DISTRICT, value = "district_id")
     @ApiModelProperty(value = "所属片区id")
     private Long districtId;
 

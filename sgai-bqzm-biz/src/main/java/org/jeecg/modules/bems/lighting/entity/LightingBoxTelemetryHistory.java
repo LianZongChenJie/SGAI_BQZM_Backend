@@ -10,6 +10,8 @@ import lombok.Data;
 import lombok.EqualsAndHashCode;
 import lombok.experimental.Accessors;
 
+import org.jeecg.modules.bems.permission.annotation.DataPermissionField;
+import org.jeecg.modules.bems.permission.entity.RoleDataPermission;
 import java.io.Serializable;
 import java.util.Date;
 
@@ -31,6 +33,7 @@ public class LightingBoxTelemetryHistory implements Serializable {
     private String gatewayCode;
     private Long areaId;
     private String areaName;
+    @DataPermissionField(type = RoleDataPermission.TYPE_DISTRICT, value = "district_id")
     private Long districtId;
 
     private Double voltageA;
