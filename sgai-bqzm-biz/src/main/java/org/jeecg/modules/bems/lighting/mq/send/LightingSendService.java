@@ -121,10 +121,13 @@ public class LightingSendService {
         msg.put("comstat","离线");
         MessageProperties properties = new MessageProperties();
         properties.setContentType(MessageProperties.CONTENT_TYPE_JSON);
-        long delayTime = 1000L * 60L * 20L;
-        properties.setHeader("x-delay",delayTime);
+        // 延迟 20 分钟；x-delay 单位是毫秒，Redis TTL 单位是秒
+        long delayMillis = 1000L * 60L * 20L;
+        long delaySeconds = 60L * 20L;
+        properties.setHeader("x-delay", delayMillis);
         rabbitTemplate.send(LightingMqConstant.EXCHANGE_LIGHTING_PLAN,LightingMqConstant.ROUTING_KEY_LIGHTING_COMSTAT,new Message(JSONObject.toJSONString(msg).getBytes(), properties));
-        redisUtil.set("lighting:" + space + ":" + areaCode + ":" + circuitCode, "离线", delayTime - 1000L);
+        // Redis key 作为"设备 20 分钟内有上报"的标记，TTL 设为 20 分钟-1 秒，保证延迟消息消费时恰好过期
+        redisUtil.set("lighting:" + space + ":" + areaCode + ":" + circuitCode, "离线", delaySeconds - 1L);
     }
 
     /**

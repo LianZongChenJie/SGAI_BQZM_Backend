@@ -503,8 +503,8 @@ public class LightingMsgListener {
             // 更新通讯状态为在线
             circuitService.updateComstat(space, areaCode, circuit.getCircuitCode(), LightingCircuit.COMSTAT_ONLINE);
 
-            // 发送离线延迟消息
-            sendService.sendLightingCircuitComstat(space, String.valueOf(circuit.getAreaId()), circuit.getCircuitCode());
+            // 发送离线延迟消息（areaCode 须传真实区域编码，与上方 updateComstat 一致，否则离线消费时按编码匹配不到区域）
+            sendService.sendLightingCircuitComstat(space, areaCode, circuit.getCircuitCode());
 
 //                log.info("【北区】更新回路状态：circuit_code={}, status={}", fullCircuitCode, status);
         }else{
