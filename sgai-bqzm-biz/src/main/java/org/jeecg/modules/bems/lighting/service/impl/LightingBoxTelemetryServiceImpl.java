@@ -53,9 +53,9 @@ public class LightingBoxTelemetryServiceImpl extends ServiceImpl<LightingBoxTele
             return;
         }
         Date collectTime = parseTime(msg.getString("CollectTime"));
-        Long areaId = msg.getLong("AreaID");
-        // 区域信息：区域名 + 所属片区id（通过 AreaID 反查 lighting_area）
-        AreaInfo areaInfo = resolveAreaInfo(msg.getString("AreaName"), areaId);
+        // 区域信息：区域名 + 所属片区id（优先按 AreaID 反查 lighting_area；消息不带 AreaID 时按 GatewayCode 反查）
+        AreaInfo areaInfo = resolveAreaInfo(msg.getString("AreaName"), msg.getLong("AreaID"), gatewayCode);
+        Long areaId = areaInfo.areaId;
 
         LightingBoxTelemetry snap = fillSnapshot(msg, gatewayCode, areaId, areaInfo, collectTime);
         LightingBoxTelemetryHistory hist = fillHistory(msg, gatewayCode, areaId, areaInfo, collectTime);
@@ -137,11 +137,12 @@ public class LightingBoxTelemetryServiceImpl extends ServiceImpl<LightingBoxTele
         return historyMapper.selectList(qw);
     }
 
-    /** 区域信息：区域名 + 所属片区id */
+    /** 区域信息：区域主键 + 区域名 + 所属片区id */
     static class AreaInfo {
+        Long areaId;
         String areaName;
         Long districtId;
-        AreaInfo(String areaName, Long districtId) { this.areaName = areaName; this.districtId = districtId; }
+        AreaInfo(Long areaId, String areaName, Long districtId) { this.areaId = areaId; this.areaName = areaName; this.districtId = districtId; }
     }
 
     /** 填充快照实体 */
@@ -192,24 +193,66 @@ public class LightingBoxTelemetryServiceImpl extends ServiceImpl<LightingBoxTele
         return h;
     }
 
-    /** 解析区域信息：区域名 + 所属片区id（通过 AreaID 反查 lighting_area） */
-    private AreaInfo resolveAreaInfo(String msgAreaName, Long areaId) {
-        // 消息里带了区域名则用，但片区id仍须反查
+    /**
+     * 解析区域信息：区域主键 + 区域名 + 所属片区id
+     * 1) 优先按消息 AreaID（lighting_area 主键）反查；
+     * 2) 消息不带 AreaID 或反查不到时，按 GatewayCode 反查（903 空间 area_code 小数点后末段=网关号，与能耗消息逻辑一致）；
+     * 3) 都失败时兜底使用消息携带的区域名（片区id置空）。
+     */
+    private AreaInfo resolveAreaInfo(String msgAreaName, Long areaId, String gatewayCode) {
+        // 1) 优先按 AreaID 主键反查
         if (areaId != null) {
             try {
                 LightingArea area = areaService.getById(areaId);
                 if (area != null) {
                     String name = (msgAreaName != null && !msgAreaName.isEmpty())
                             ? msgAreaName : area.getAreaName();
-                    return new AreaInfo(name, area.getDistrictId());
+                    return new AreaInfo(area.getId(), name, area.getDistrictId());
                 }
             } catch (Exception e) {
                 log.warn("【箱子遥测】反查区域信息失败 areaId={}", areaId, e);
             }
         }
+        // 2) 按 GatewayCode 反查（903 空间 area_code 末段匹配网关号）
+        if (gatewayCode != null && !gatewayCode.isEmpty()) {
+            LightingArea area = resolveAreaByGateway(gatewayCode);
+            if (area != null) {
+                String name = (msgAreaName != null && !msgAreaName.isEmpty())
+                        ? msgAreaName : area.getAreaName();
+                return new AreaInfo(area.getId(), name, area.getDistrictId());
+            }
+        }
+        // 3) 兜底：只用消息携带的区域名
         return new AreaInfo(
+                null,
                 (msgAreaName != null && !msgAreaName.isEmpty()) ? msgAreaName : null,
                 null);
+    }
+
+    /** 按网关号反查区域：903 空间下 area_code 小数点后末段等于网关号（如 area_code=10.22.160.11 → 网关号 11） */
+    private LightingArea resolveAreaByGateway(String gatewayCode) {
+        try {
+            List<LightingArea> areaList = areaService.list(new LambdaQueryWrapper<LightingArea>()
+                    .eq(LightingArea::getSpace, "903")
+                    .isNotNull(LightingArea::getAreaCode));
+            if (areaList == null || areaList.isEmpty()) {
+                return null;
+            }
+            for (LightingArea area : areaList) {
+                String code = area.getAreaCode();
+                if (code == null || code.isEmpty()) {
+                    continue;
+                }
+                int dot = code.lastIndexOf('.');
+                String tail = dot >= 0 ? code.substring(dot + 1).trim() : code.trim();
+                if (gatewayCode.equals(tail)) {
+                    return area;
+                }
+            }
+        } catch (Exception e) {
+            log.warn("【箱子遥测】按网关号反查区域失败 gatewayCode={}", gatewayCode, e);
+        }
+        return null;
     }
 
     private Double getDouble(JSONObject msg, String key) {
