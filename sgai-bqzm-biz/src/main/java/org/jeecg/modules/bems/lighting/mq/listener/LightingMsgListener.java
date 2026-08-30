@@ -2,6 +2,7 @@ package org.jeecg.modules.bems.lighting.mq.listener;
 
 import com.alibaba.fastjson.JSONObject;
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
+import com.baomidou.mybatisplus.core.conditions.update.LambdaUpdateWrapper;
 import lombok.AllArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.apache.commons.lang3.StringUtils;
@@ -408,6 +409,15 @@ public class LightingMsgListener {
             return;
         }
 
+        // DataType=4 设备在线/离线状态（904/905/906 空间按网关整体设置）
+        // 消息格式：{"DataType":"4","AreaID":"0","CircuitCode":"null","Value":"1","GatewayCode":"154.2"}
+        // Value：1=在线、0=离线；GatewayCode 对应整体：54(904)、154.100(905)、154.2(906)
+        // 网关整体要么全在线、要么全离线，即把该网关对应空间下所有回路的 comstat 统一设置
+        if("4".equals(dataType)){
+            handleBqOnlineStatus(msg);
+            return;
+        }
+
         // DataType=6 电量累计值（kWh）：累计电量已由 DataType=7 箱子遥测(TotalEnergy)承担，
         // lighting_energy_read 表不再写入（历史数据保留），此处直接跳过，避免重复采集
         if("6".equals(dataType)){
@@ -600,6 +610,54 @@ public class LightingMsgListener {
             log.warn("【能耗】网关 {} 未匹配到 903 区域（area_code 小数点后末段无对应）", gatewayCode);
         }
         return match;
+    }
+
+    /**
+     * 特殊处理：DataType=4 设备在线/离线状态（904/905/906 空间按网关整体设置）
+     * 消息格式：{"DataType":"4","AreaID":"0","CircuitCode":"null","Value":"1","GatewayCode":"154.2"}
+     * Value：1=在线、0=离线；GatewayCode 对应整体：54(904)、154.100(905)、154.2(906)
+     * 网关整体要么全在线、要么全离线，即把该网关对应空间下所有回路的 comstat 统一设置
+     */
+    private void handleBqOnlineStatus(JSONObject msg){
+        String gatewayCode = msg.getString("GatewayCode");
+        String value = msg.getString("Value");
+        if(StringUtils.isEmpty(gatewayCode) || StringUtils.isEmpty(value)){
+            log.warn("【在线状态】DataType=4 参数不完整，跳过：{}", msg.toJSONString());
+            return;
+        }
+        String comstat = "1".equals(value.trim()) ? LightingCircuit.COMSTAT_ONLINE : LightingCircuit.COMSTAT_OFFLINE;
+        // 网关 -> 空间
+        String space = null;
+        if("54".equals(gatewayCode)){
+            space = "904";
+        } else if("154.100".equals(gatewayCode)){
+            space = "905";
+        } else if("154.2".equals(gatewayCode)){
+            space = "906";
+        }
+        if(space == null){
+            log.warn("【在线状态】DataType=4 未知网关，跳过：gatewayCode={}", gatewayCode);
+            return;
+        }
+        // 按空间查出所有区域及其回路
+        List<LightingArea> areas = areaService.list(new LambdaQueryWrapper<LightingArea>()
+                .eq(LightingArea::getSpace, space));
+        if(areas == null || areas.isEmpty()){
+            log.warn("【在线状态】空间 {} 无区域，跳过", space);
+            return;
+        }
+        List<Long> areaIds = areas.stream().map(LightingArea::getId).collect(Collectors.toList());
+        List<LightingCircuit> circuits = circuitService.list(new LambdaQueryWrapper<LightingCircuit>()
+                .in(LightingCircuit::getAreaId, areaIds));
+        if(circuits == null || circuits.isEmpty()){
+            log.warn("【在线状态】空间 {} 无回路，跳过", space);
+            return;
+        }
+        // 整体更新该空间所有回路的通讯状态
+        circuitService.update(new LambdaUpdateWrapper<LightingCircuit>()
+                .in(LightingCircuit::getAreaId, areaIds)
+                .set(LightingCircuit::getComstat, comstat));
+        log.info("【在线状态】DataType=4 网关{}整体设为{}，空间{}共更新回路{}个", gatewayCode, comstat, space, circuits.size());
     }
 
     /**
