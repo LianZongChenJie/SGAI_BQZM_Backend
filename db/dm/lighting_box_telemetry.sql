@@ -89,5 +89,15 @@ COMMENT ON COLUMN lighting_box_telemetry_history.total_energy   IS '累积电量
 COMMENT ON COLUMN lighting_box_telemetry_history.collect_time   IS '采集时间';
 
 -- 3. 历史表索引（按网关 + 时间查询历史数据）
-CREATE INDEX IF NOT EXISTS idx_box_tele_history_gw_time
-    ON lighting_box_telemetry_history(gateway_code, collect_time);
+-- 达梦不支持 CREATE INDEX IF NOT EXISTS，改用 PL/SQL 块判断存在后创建（幂等）
+DECLARE
+    idx_cnt INT;
+BEGIN
+    SELECT COUNT(*) INTO idx_cnt
+      FROM USER_INDEXES
+     WHERE INDEX_NAME = 'IDX_BOX_TELE_HISTORY_GW_TIME';
+    IF idx_cnt = 0 THEN
+        EXECUTE IMMEDIATE 'CREATE INDEX IDX_BOX_TELE_HISTORY_GW_TIME ON lighting_box_telemetry_history(gateway_code, collect_time)';
+    END IF;
+END;
+/
