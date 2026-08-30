@@ -12,6 +12,7 @@ import org.jeecg.modules.bems.lighting.entity.LightingVideoMonitor;
 import org.jeecg.modules.bems.lighting.service.ILightingAreaService;
 import org.jeecg.modules.bems.lighting.service.ILightingDistrictService;
 import org.jeecg.modules.bems.lighting.service.ILightingVideoMonitorService;
+import org.jeecg.modules.bems.permission.annotation.DataPermission;
 import org.springframework.web.bind.annotation.*;
 
 import java.util.ArrayList;
@@ -61,6 +62,7 @@ public class LightingVideoMonitorController {
      * 名称取片区名称/区域名称，视频地址取 monitorAdr，仅返回有监控地址的记录。
      */
     @ApiOperation("获取所有视频列表（片区type=1 + 区域合并）")
+    @DataPermission
     @GetMapping("/listAll")
     public Result<List<LightingVideoMonitor>> listAll() {
         List<LightingVideoMonitor> result = new ArrayList<>();

@@ -5,6 +5,8 @@ import com.baomidou.mybatisplus.annotation.TableName;
 import io.swagger.annotations.ApiModel;
 import io.swagger.annotations.ApiModelProperty;
 import lombok.Data;
+import org.jeecg.modules.bems.permission.annotation.DataPermissionField;
+import org.jeecg.modules.bems.permission.entity.RoleDataPermission;
 
 /**
  * 照明片区（与区域 lighting_area 一对多：一个片区下包含多个区域）
@@ -18,6 +20,7 @@ public class LightingDistrict {
      * 主键
      */
     @TableId
+    @DataPermissionField(type = RoleDataPermission.TYPE_DISTRICT, value = "id")
     @ApiModelProperty(value = "主键ID")
     private Long id;
 

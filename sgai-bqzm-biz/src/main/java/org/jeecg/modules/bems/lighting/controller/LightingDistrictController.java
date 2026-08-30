@@ -21,6 +21,7 @@ import org.jeecg.modules.bems.lighting.service.ILightingAreaService;
 import org.jeecg.modules.bems.lighting.service.ILightingCircuitService;
 import org.jeecg.modules.bems.lighting.service.ILightingDistrictService;
 import org.jeecg.modules.bems.lighting.vo.LightingDistrictVo;
+import org.jeecg.modules.bems.permission.annotation.DataPermission;
 import org.springframework.beans.BeanUtils;
 import org.springframework.web.bind.annotation.*;
 
@@ -62,6 +63,7 @@ public class LightingDistrictController {
             @ApiImplicitParam(name = "status", value = "状态：启用、停用", paramType = "query", dataType = "string"),
             @ApiImplicitParam(name = "type", value = "类型", paramType = "query", dataType = "string")
     })
+    @DataPermission
     @GetMapping("/listPage")
     public Result<IPage<LightingDistrictVo>> listPage(@RequestParam(defaultValue = "1") Integer pageNo,
                                                       @RequestParam(defaultValue = "10") Integer pageSize,
@@ -134,6 +136,7 @@ public class LightingDistrictController {
      * 获取所有片区
      */
     @ApiOperation("获取所有片区")
+    @DataPermission
     @GetMapping("/all")
     public Result<?> all() {
         return Result.ok(service.list(new LambdaQueryWrapper<LightingDistrict>().orderByAsc(LightingDistrict::getSort)));
@@ -143,6 +146,7 @@ public class LightingDistrictController {
      * 获取片区详情
      */
     @ApiOperation("获取片区详情")
+    @DataPermission
     @GetMapping("/detail")
     public Result<?> detail(Long id) {
         return Result.ok(service.getById(id));
@@ -155,6 +159,7 @@ public class LightingDistrictController {
      * → lighting_circuit.area_id 关联查询该片区下所有回路
      */
     @ApiOperation("查询片区下所有回路信息（片区spaceIds → lighting_area.space → lighting_circuit.area_id）")
+    @DataPermission
     @GetMapping("/circuits")
     public Result<List<LightingCircuit>> circuits(Long id) {
         LightingDistrict district = service.getById(id);

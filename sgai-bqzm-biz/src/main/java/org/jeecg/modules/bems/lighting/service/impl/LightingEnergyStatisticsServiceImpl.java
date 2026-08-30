@@ -1,10 +1,13 @@
 package org.jeecg.modules.bems.lighting.service.impl;
 
+import cn.hutool.core.collection.CollectionUtil;
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import lombok.AllArgsConstructor;
 import lombok.Data;
 import lombok.extern.slf4j.Slf4j;
 import org.apache.commons.lang3.StringUtils;
+import org.apache.shiro.SecurityUtils;
+import org.jeecg.common.system.vo.LoginUser;
 import org.jeecg.modules.bems.lighting.entity.LightingArea;
 import org.jeecg.modules.bems.lighting.entity.LightingCircuit;
 import org.jeecg.modules.bems.lighting.entity.LightingDistrict;
@@ -16,6 +19,9 @@ import org.jeecg.modules.bems.lighting.service.ILightingCircuitService;
 import org.jeecg.modules.bems.lighting.service.ILightingDistrictService;
 import org.jeecg.modules.bems.lighting.service.ILightingEnergyHourService;
 import org.jeecg.modules.bems.lighting.service.ILightingEnergyStatisticsService;
+import org.jeecg.modules.bems.permission.entity.RoleDataPermission;
+import org.jeecg.modules.bems.permission.service.RoleDataPermissionService;
+import org.jeecg.modules.bems.permission.vo.UserDataScope;
 import org.jeecg.modules.bems.lighting.vo.EnergyMeterReadVo;
 import org.jeecg.modules.bems.lighting.vo.EnergyProportionVo;
 import org.jeecg.modules.bems.lighting.vo.EnergyRankItemVo;
@@ -66,12 +72,13 @@ public class LightingEnergyStatisticsServiceImpl implements ILightingEnergyStati
     private final ILightingAreaService areaService;
     private final ILightingDistrictService districtService;
     private final LightingEnergyReadMapper energyReadMapper;
+    private final RoleDataPermissionService roleDataPermissionService;
 
     @Override
     public List<EnergyRankItemVo> ranking(String level, String date, Integer top) {
         LocalDate day = parseDate(date);
         String lv = normalizeLevel(level);
-        List<EnergyAgg> aggs = aggregate(lv, day);
+        List<EnergyAgg> aggs = filterByPermission(aggregate(lv, day));
         aggs.sort((a, b) -> b.getToday().compareTo(a.getToday()));
         BigDecimal grandToday = aggs.stream().map(EnergyAgg::getToday).reduce(BigDecimal.ZERO, BigDecimal::add);
         int limit = top == null || top <= 0 ? 15 : top;
@@ -82,7 +89,7 @@ public class LightingEnergyStatisticsServiceImpl implements ILightingEnergyStati
     public List<EnergyProportionVo> proportion(String level, String date) {
         LocalDate day = parseDate(date);
         String lv = normalizeLevel(level);
-        List<EnergyAgg> aggs = aggregate(lv, day);
+        List<EnergyAgg> aggs = filterByPermission(aggregate(lv, day));
         aggs.sort((a, b) -> b.getToday().compareTo(a.getToday()));
         BigDecimal grandToday = aggs.stream().map(EnergyAgg::getToday).reduce(BigDecimal.ZERO, BigDecimal::add);
         List<EnergyProportionVo> out = new ArrayList<>();
@@ -125,7 +132,7 @@ public class LightingEnergyStatisticsServiceImpl implements ILightingEnergyStati
         Ctx ctx = buildCtx(rows);
         if (LEVEL_PARCEL.equals(lv)) {
             // 按地块：今日 Top5 地块逐时对比
-            List<EnergyAgg> aggs = aggregate(LEVEL_PARCEL, day, ctx, rows);
+            List<EnergyAgg> aggs = filterByPermission(aggregate(LEVEL_PARCEL, day, ctx, rows));
             aggs.sort((a, b) -> b.getToday().compareTo(a.getToday()));
             for (EnergyAgg agg : aggs.stream().limit(5).collect(Collectors.toList())) {
                 BigDecimal[] points = new BigDecimal[24];
@@ -175,9 +182,9 @@ public class LightingEnergyStatisticsServiceImpl implements ILightingEnergyStati
             return Collections.emptyList();
         }
         Ctx ctx = buildCtx(rows);
-        List<EnergyAgg> parcels = aggregate(LEVEL_PARCEL, day, ctx, rows);
-        List<EnergyAgg> zones = aggregate(LEVEL_ZONE, day, ctx, rows);
-        List<EnergyAgg> boxes = aggregate(LEVEL_BOX, day, ctx, rows);
+        List<EnergyAgg> parcels = filterByPermission(aggregate(LEVEL_PARCEL, day, ctx, rows));
+        List<EnergyAgg> zones = filterByPermission(aggregate(LEVEL_ZONE, day, ctx, rows));
+        List<EnergyAgg> boxes = filterByPermission(aggregate(LEVEL_BOX, day, ctx, rows));
         BigDecimal grandToday = parcels.stream().map(EnergyAgg::getToday).reduce(BigDecimal.ZERO, BigDecimal::add);
 
         // 区域挂到地块下
@@ -225,7 +232,7 @@ public class LightingEnergyStatisticsServiceImpl implements ILightingEnergyStati
             return Collections.emptyList();
         }
         Ctx ctx = buildCtx(rows);
-        List<EnergyAgg> boxes = aggregate(LEVEL_BOX, day, ctx, rows);
+        List<EnergyAgg> boxes = filterByPermission(aggregate(LEVEL_BOX, day, ctx, rows));
         BigDecimal grandToday = boxes.stream().map(EnergyAgg::getToday).reduce(BigDecimal.ZERO, BigDecimal::add);
 
         // 过滤条件：片区按 id 精确过滤，箱子名称按模糊匹配
@@ -302,12 +309,34 @@ public class LightingEnergyStatisticsServiceImpl implements ILightingEnergyStati
             end = tmp;
         }
 
+        // 数据权限：bqzm 放行；非 bqzm 时 districtId 限定在权限片区集合内
+        Set<Long> allowedDistricts = null;
+        if (!isBqzmRole()) {
+            allowedDistricts = getDistrictPermissionIds();
+            if (CollectionUtil.isEmpty(allowedDistricts)) {
+                // 非 bqzm 且未配置任何片区权限：无可访问数据
+                return new ArrayList<>();
+            }
+        }
+
         // 1. 片区下区域集合（districtId 为空或 <=0 表示查询全部片区）
         List<Long> areaIds = new ArrayList<>();
         Map<Long, LightingArea> areaMap = new HashMap<>();
         if (districtId != null && districtId > 0) {
+            if (allowedDistricts != null && !allowedDistricts.contains(districtId)) {
+                // 非 bqzm 且请求的片区不在权限内：无权限
+                return new ArrayList<>();
+            }
             List<LightingArea> areas = areaService.list(new LambdaQueryWrapper<LightingArea>()
                     .eq(LightingArea::getDistrictId, districtId));
+            for (LightingArea a : areas) {
+                areaIds.add(a.getId());
+                areaMap.put(a.getId(), a);
+            }
+        } else if (allowedDistricts != null) {
+            // 非 bqzm 查询全部片区：限定在权限片区集合内
+            List<LightingArea> areas = areaService.list(new LambdaQueryWrapper<LightingArea>()
+                    .in(LightingArea::getDistrictId, allowedDistricts));
             for (LightingArea a : areas) {
                 areaIds.add(a.getId());
                 areaMap.put(a.getId(), a);
@@ -425,6 +454,85 @@ public class LightingEnergyStatisticsServiceImpl implements ILightingEnergyStati
     }
 
     // ==================== 内部实现 ====================
+
+    /**
+     * 判断当前登录用户是否拥有 bqzm 角色（与综合预览角色判断保持一致）
+     */
+    private boolean isBqzmRole() {
+        try {
+            LoginUser sysUser = (LoginUser) SecurityUtils.getSubject().getPrincipal();
+            if (sysUser == null || StringUtils.isEmpty(sysUser.getRoleCode())) {
+                return false;
+            }
+            for (String roleCode : sysUser.getRoleCode().split(",")) {
+                if (StringUtils.trim(roleCode).equals("bqzm")) {
+                    return true;
+                }
+            }
+        } catch (Exception e) {
+            log.warn("【能耗统计】判断 bqzm 角色失败，按非 bqzm 处理", e);
+        }
+        return false;
+    }
+
+    /**
+     * 数据权限过滤：bqzm 角色返回全部；其他角色仅保留其有权限片区下的数据
+     * 权限片区集合从 role_data_permission 配置表读取（DISTRICT 类型）
+     * - parcel(地块)级别：直接按聚合结果的 districtId 判断
+     * - zone/box(区域/箱子)级别：通过区域反查所属片区判断
+     * - 未关联区域（待确认映射）的数据，非 bqzm 角色一律不展示
+     */
+    private List<EnergyAgg> filterByPermission(List<EnergyAgg> aggs) {
+        if (isBqzmRole()) {
+            return aggs;
+        }
+        Set<Long> allowedDistricts = getDistrictPermissionIds();
+        if (CollectionUtil.isEmpty(allowedDistricts)) {
+            // 非 bqzm 且未配置任何片区权限：不展示任何能耗数据
+            return new ArrayList<>();
+        }
+        if (aggs == null || aggs.isEmpty()) {
+            return aggs;
+        }
+        // 收集所有 areaId，反查区域 → 片区
+        Set<Long> allAreaIds = aggs.stream()
+                .filter(a -> a.getAreaId() != null)
+                .map(EnergyAgg::getAreaId)
+                .collect(Collectors.toSet());
+        Map<Long, Long> areaDistrict = new HashMap<>();
+        if (!allAreaIds.isEmpty()) {
+            for (LightingArea area : areaService.listByIds(allAreaIds)) {
+                if (area.getId() != null) {
+                    areaDistrict.put(area.getId(), area.getDistrictId());
+                }
+            }
+        }
+        return aggs.stream().filter(a -> {
+            if (a.isUnassigned()) {
+                return false;
+            }
+            Long did = a.getDistrictId();
+            if (did == null && a.getAreaId() != null) {
+                did = areaDistrict.get(a.getAreaId());
+            }
+            return did != null && allowedDistricts.contains(did);
+        }).collect(Collectors.toList());
+    }
+
+    /**
+     * 从 role_data_permission 配置表读取当前用户有权限的片区(DISTRICT)ID集合
+     * 未登录或读取失败返回空集合
+     */
+    private Set<Long> getDistrictPermissionIds() {
+        try {
+            UserDataScope scope = roleDataPermissionService.getCurrentUserDataScope();
+            Set<Long> ids = scope != null ? scope.getPermissionIds(RoleDataPermission.TYPE_DISTRICT) : null;
+            return ids == null ? new HashSet<>() : ids;
+        } catch (Exception e) {
+            log.warn("【能耗统计】读取片区权限失败，按无权限处理", e);
+            return new HashSet<>();
+        }
+    }
 
     private String normalizeLevel(String level) {
         if (level == null) {

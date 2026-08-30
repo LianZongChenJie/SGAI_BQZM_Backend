@@ -10,7 +10,9 @@ import lombok.AllArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.apache.commons.lang3.StringUtils;
 import org.apache.poi.ss.usermodel.Workbook;
+import org.apache.shiro.SecurityUtils;
 import org.jeecg.common.exception.JeecgBootException;
+import org.jeecg.common.system.vo.LoginUser;
 import org.jeecg.modules.bems.lighting.dto.LightingPlanExportDto;
 import org.jeecg.modules.bems.lighting.dto.LightingSceneDetailDto;
 import org.jeecg.modules.bems.lighting.dto.LightingSceneDto;
@@ -84,8 +86,7 @@ public class LightingSceneServiceImpl extends ServiceImpl<LightingSceneMapper, L
     public IPage<LightingPlan> listPage(LightingSceneQueryDto params) {
         // 名称过滤兼容前端只换 URL：planName 与 sceneName 等价，取任一非空值
         String name = StringUtils.isNotEmpty(params.getPlanName()) ? params.getPlanName() : params.getSceneName();
-        Page<LightingScene> scenePage = super.page(new Page<>(params.getPageNo(), params.getPageSize()),
-                new LambdaQueryWrapper<LightingScene>()
+        LambdaQueryWrapper<LightingScene> wrapper = new LambdaQueryWrapper<LightingScene>()
                         .like(StringUtils.isNotEmpty(name), LightingScene::getSceneName, name)
                         .eq(StringUtils.isNotEmpty(params.getSceneType()), LightingScene::getSceneType, params.getSceneType())
                         .eq(StringUtils.isNotEmpty(params.getCategory()), LightingScene::getCategory, params.getCategory())
@@ -93,8 +94,18 @@ public class LightingSceneServiceImpl extends ServiceImpl<LightingSceneMapper, L
                         .eq(StringUtils.isNotEmpty(params.getTagId()), LightingScene::getTagId, params.getTagId())
                         .like(StringUtils.isNotEmpty(params.getTagName()), LightingScene::getTagName, params.getTagName())
                         .like(StringUtils.isNotEmpty(params.getProgramSceneIds()), LightingScene::getProgramSceneIds, params.getProgramSceneIds())
-                        .orderByAsc(LightingScene::getSort)
-        );
+                        .orderByAsc(LightingScene::getSort);
+        // 数据权限：bqzm 角色展示全部场景；其他角色仅展示"完全归属于片区8(服贸会)"的场景
+        if (!isBqzmRole()) {
+            Set<Long> allowedSceneIds = computeDistrictSceneIds();
+            if (CollectionUtil.isEmpty(allowedSceneIds)) {
+                // 无可访问场景：使用一个必然不存在的 id，保证不返回数据且避免 IN () 语法错误
+                allowedSceneIds = new HashSet<>();
+                allowedSceneIds.add(-1L);
+            }
+            wrapper.in(LightingScene::getId, allowedSceneIds);
+        }
+        Page<LightingScene> scenePage = super.page(new Page<>(params.getPageNo(), params.getPageSize()), wrapper);
         List<LightingScene> scenes = scenePage.getRecords();
         Page<LightingPlan> page = new Page<>(scenePage.getCurrent(), scenePage.getSize(), scenePage.getTotal());
         if (CollectionUtil.isEmpty(scenes)) {
@@ -116,6 +127,86 @@ public class LightingSceneServiceImpl extends ServiceImpl<LightingSceneMapper, L
         fillRunningProgramDetail(records);
         page.setRecords(records);
         return page;
+    }
+
+    /**
+     * 判断当前登录用户是否拥有 bqzm 角色（与综合预览角色判断保持一致）
+     */
+    private boolean isBqzmRole() {
+        try {
+            LoginUser sysUser = (LoginUser) SecurityUtils.getSubject().getPrincipal();
+            if (sysUser == null || StringUtils.isEmpty(sysUser.getRoleCode())) {
+                return false;
+            }
+            for (String roleCode : sysUser.getRoleCode().split(",")) {
+                if (StringUtils.trim(roleCode).equals("bqzm")) {
+                    return true;
+                }
+            }
+        } catch (Exception e) {
+            log.warn("【场景列表】判断 bqzm 角色失败，按非 bqzm 处理", e);
+        }
+        return false;
+    }
+
+    /**
+     * 计算"完全归属于片区8(服贸会)"的场景id集合（供非 bqzm 角色过滤）
+     * 归属规则：场景所有明细都落在片区8内。
+     *  - 区域类型明细：relId ∈ 片区8区域集合
+     *  - 回路类型明细：relId ∈ 片区8回路集合（回路归属区域 → 片区）
+     *  - 无明细或存在任意明细不在片区8内 → 不归属
+     */
+    private Set<Long> computeDistrictSceneIds() {
+        Set<Long> result = new HashSet<>();
+        // 1. 片区8下所有区域
+        List<LightingArea> districtAreas = lightingAreaService.list(
+                new LambdaQueryWrapper<LightingArea>().eq(LightingArea::getDistrictId, 8L));
+        if (CollectionUtil.isEmpty(districtAreas)) {
+            return result;
+        }
+        Set<Long> districtAreaIds = districtAreas.stream()
+                .map(LightingArea::getId).collect(Collectors.toSet());
+        // 2. 片区8下所有回路（通过区域关联）
+        List<LightingCircuit> districtCircuits = lightingCircuitService.list(
+                new LambdaQueryWrapper<LightingCircuit>().in(LightingCircuit::getAreaId, districtAreaIds));
+        Set<Long> districtCircuitIds = districtCircuits.stream()
+                .map(LightingCircuit::getId).collect(Collectors.toSet());
+        // 3. 所有场景明细，按 sceneId 分组
+        List<LightingSceneDetail> allDetails = detailMapper.selectList(null);
+        if (CollectionUtil.isEmpty(allDetails)) {
+            return result;
+        }
+        Map<Long, List<LightingSceneDetail>> detailMap = allDetails.stream()
+                .collect(Collectors.groupingBy(LightingSceneDetail::getSceneId));
+        // 4. 判断每个场景是否完全归属片区8
+        for (Map.Entry<Long, List<LightingSceneDetail>> entry : detailMap.entrySet()) {
+            List<LightingSceneDetail> details = entry.getValue();
+            if (CollectionUtil.isEmpty(details)) {
+                continue;
+            }
+            boolean allInDistrict = true;
+            for (LightingSceneDetail detail : details) {
+                if (LightingScene.REL_TYPE_AREA.equals(detail.getRelType())) {
+                    if (!districtAreaIds.contains(detail.getRelId())) {
+                        allInDistrict = false;
+                        break;
+                    }
+                } else if (LightingScene.REL_TYPE_CIRCUIT.equals(detail.getRelType())) {
+                    if (!districtCircuitIds.contains(detail.getRelId())) {
+                        allInDistrict = false;
+                        break;
+                    }
+                } else {
+                    // 未知明细类型，视为不在片区8内
+                    allInDistrict = false;
+                    break;
+                }
+            }
+            if (allInDistrict) {
+                result.add(entry.getKey());
+            }
+        }
+        return result;
     }
 
     /**
@@ -195,8 +286,7 @@ public class LightingSceneServiceImpl extends ServiceImpl<LightingSceneMapper, L
     public void exportExcel(LightingSceneQueryDto params, HttpServletResponse response) {
         // 名称过滤兼容前端只换 URL：planName 与 sceneName 等价，取任一非空值
         String name = StringUtils.isNotEmpty(params.getPlanName()) ? params.getPlanName() : params.getSceneName();
-        // 查询条件与 listPage 一致，不分页查全量
-        List<LightingScene> scenes = super.list(new LambdaQueryWrapper<LightingScene>()
+        LambdaQueryWrapper<LightingScene> wrapper = new LambdaQueryWrapper<LightingScene>()
                 .like(StringUtils.isNotEmpty(name), LightingScene::getSceneName, name)
                 .eq(StringUtils.isNotEmpty(params.getSceneType()), LightingScene::getSceneType, params.getSceneType())
                 .eq(StringUtils.isNotEmpty(params.getCategory()), LightingScene::getCategory, params.getCategory())
@@ -204,7 +294,17 @@ public class LightingSceneServiceImpl extends ServiceImpl<LightingSceneMapper, L
                 .eq(StringUtils.isNotEmpty(params.getTagId()), LightingScene::getTagId, params.getTagId())
                 .like(StringUtils.isNotEmpty(params.getTagName()), LightingScene::getTagName, params.getTagName())
                 .like(StringUtils.isNotEmpty(params.getProgramSceneIds()), LightingScene::getProgramSceneIds, params.getProgramSceneIds())
-                .orderByAsc(LightingScene::getSort));
+                .orderByAsc(LightingScene::getSort);
+        // 数据权限：bqzm 角色导出全部；其他角色仅导出完全归属于片区8的场景
+        if (!isBqzmRole()) {
+            Set<Long> allowedSceneIds = computeDistrictSceneIds();
+            if (CollectionUtil.isEmpty(allowedSceneIds)) {
+                allowedSceneIds = new HashSet<>();
+                allowedSceneIds.add(-1L);
+            }
+            wrapper.in(LightingScene::getId, allowedSceneIds);
+        }
+        List<LightingScene> scenes = super.list(wrapper);
         List<LightingPlanExportDto> rows = new ArrayList<>();
         if (CollectionUtil.isNotEmpty(scenes)) {
             // 批量查询明细（避免 N+1）

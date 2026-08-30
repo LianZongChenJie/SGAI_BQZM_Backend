@@ -4,6 +4,8 @@ import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import lombok.AllArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.apache.commons.lang3.StringUtils;
+import org.apache.shiro.SecurityUtils;
+import org.jeecg.common.system.vo.LoginUser;
 import org.jeecg.modules.bems.constant.BusinessConfigConstant;
 import org.jeecg.modules.bems.lighting.entity.LightingArea;
 import org.jeecg.modules.bems.lighting.entity.LightingCircuit;
@@ -55,13 +57,29 @@ public class LightingHomeServiceImpl implements ILightingHomeService {
                 .distinct()
                 .count();
 
-        vo.setTotalCount(businessConfigService.getValueByKey(BusinessConfigConstant.PREVIEW_STATISTICS_LIGHTING_PLOT_NUM));
+        // 根据当前角色选择配置项：bqzm 角色读取当前配置，其他角色读取 ":other" 配置
+        boolean isBqzm = isBqzmRole();
+        String plotNumKey = isBqzm
+                ? BusinessConfigConstant.PREVIEW_STATISTICS_LIGHTING_PLOT_NUM
+                : BusinessConfigConstant.PREVIEW_STATISTICS_LIGHTING_PLOT_NUM_OTHER;
+        String coverageKey = isBqzm
+                ? BusinessConfigConstant.PREVIEW_STATISTICS_COVERAGE
+                : BusinessConfigConstant.PREVIEW_STATISTICS_COVERAGE_OTHER;
+        String pendingAlarmKey = isBqzm
+                ? BusinessConfigConstant.PREVIEW_STATISTICS_PENDING_ALARM
+                : BusinessConfigConstant.PREVIEW_STATISTICS_PENDING_ALARM_OTHER;
+
+        vo.setTotalCount(businessConfigService.getValueByKey(plotNumKey));
         vo.setCoveredCount(covered);
         vo.setCoverageRate(calcPercentage(covered, total));
-        String valueByKey = businessConfigService.getValueByKey(BusinessConfigConstant.PREVIEW_STATISTICS_COVERAGE);
+        String valueByKey = businessConfigService.getValueByKey(coverageKey);
         vo.setCoverageRate(BigDecimal.valueOf(Long.parseLong(valueByKey)));
-        vo.setPendingAlarm(businessConfigService.getValueByKey(BusinessConfigConstant.PREVIEW_STATISTICS_PENDING_ALARM));
-        String valueByKey1 = businessConfigService.getValueByKey(BusinessConfigConstant.PREVIEW_CONTROL_ALL_AREA_SCENEID);
+        vo.setPendingAlarm(businessConfigService.getValueByKey(pendingAlarmKey));
+        // 全部地块场景id：bqzm 角色读取当前配置，其他角色读取 ":other" 配置
+        String allAreaSceneKey = isBqzm
+                ? BusinessConfigConstant.PREVIEW_CONTROL_ALL_AREA_SCENEID
+                : BusinessConfigConstant.PREVIEW_CONTROL_ALL_AREA_SCENEID_OTHER;
+        String valueByKey1 = businessConfigService.getValueByKey(allAreaSceneKey);
         vo.setAllAreaSceneId(valueByKey1);
         // 根据配置的场景id，查询该场景的明细，聚合 relIds/relType（与片区场景查询一致）
         fillSceneRel(valueByKey1, vo);
@@ -229,6 +247,32 @@ public class LightingHomeServiceImpl implements ILightingHomeService {
                 log.error("一键全关-区域[{}]关闭失败", area.getAreaName(), e);
             }
         }
+    }
+
+    /**
+     * 判断当前登录用户是否拥有 bqzm 角色
+     * 通过 Shiro 获取当前用户，判断其角色编码是否包含 bqzm
+     */
+    private boolean isBqzmRole() {
+        try {
+            LoginUser sysUser = (LoginUser) SecurityUtils.getSubject().getPrincipal();
+            if (sysUser == null) {
+                // 未登录默认按非 bqzm 处理
+                return false;
+            }
+            String roleCodeStr = sysUser.getRoleCode();
+            if (StringUtils.isEmpty(roleCodeStr)) {
+                return false;
+            }
+            for (String roleCode : roleCodeStr.split(",")) {
+                if (BusinessConfigConstant.ROLE_BQZM.equals(roleCode.trim())) {
+                    return true;
+                }
+            }
+        } catch (Exception e) {
+            log.warn("【综合预览】判断 bqzm 角色失败，按非 bqzm 处理", e);
+        }
+        return false;
     }
 
     private BigDecimal calcPercentage(long part, long total) {
