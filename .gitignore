@@ -45,3 +45,4 @@ Desktop.ini
 *.zip
 *.tar.gz
 *.rar
+/logs/
