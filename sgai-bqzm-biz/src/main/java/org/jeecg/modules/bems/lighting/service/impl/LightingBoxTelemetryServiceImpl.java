@@ -57,6 +57,16 @@ public class LightingBoxTelemetryServiceImpl extends ServiceImpl<LightingBoxTele
         AreaInfo areaInfo = resolveAreaInfo(msg.getString("AreaName"), msg.getLong("AreaID"), gatewayCode);
         Long areaId = areaInfo.areaId;
 
+        // 三个区域字段（area_id/area_name/district_id）以旧快照为准，推送不更新这三个字段：
+        //  - 旧快照已有区域信息 → 永远沿用旧值（防止推送把人工维护的区域字段重置为空/覆盖）
+        //  - 旧快照无区域信息（首次推送）→ 用本次解析结果作为初始值填充
+        LightingBoxTelemetry oldSnap = boxMapper.selectOne(new LambdaQueryWrapper<LightingBoxTelemetry>()
+                .eq(LightingBoxTelemetry::getGatewayCode, gatewayCode));
+        if (oldSnap != null && oldSnap.getAreaId() != null) {
+            areaId = oldSnap.getAreaId();
+            areaInfo = new AreaInfo(oldSnap.getAreaId(), oldSnap.getAreaName(), oldSnap.getDistrictId());
+        }
+
         LightingBoxTelemetry snap = fillSnapshot(msg, gatewayCode, areaId, areaInfo, collectTime);
         LightingBoxTelemetryHistory hist = fillHistory(msg, gatewayCode, areaId, areaInfo, collectTime);
 
