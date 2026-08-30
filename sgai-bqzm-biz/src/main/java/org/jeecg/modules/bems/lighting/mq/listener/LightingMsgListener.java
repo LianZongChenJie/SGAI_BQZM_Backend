@@ -408,9 +408,10 @@ public class LightingMsgListener {
             return;
         }
 
-        // 特殊处理：DataType=6 电量累计值（kWh），每分钟一条，存入能耗分钟表
+        // DataType=6 电量累计值（kWh）：累计电量已由 DataType=7 箱子遥测(TotalEnergy)承担，
+        // lighting_energy_read 表不再写入（历史数据保留），此处直接跳过，避免重复采集
         if("6".equals(dataType)){
-            handleEnergyMessage(msg);
+            log.debug("【能耗】DataType=6 电量消息已由箱子遥测(DataType=7)承担，跳过写入 lighting_energy_read，gatewayCode={}", gatewayCode);
             return;
         }
 

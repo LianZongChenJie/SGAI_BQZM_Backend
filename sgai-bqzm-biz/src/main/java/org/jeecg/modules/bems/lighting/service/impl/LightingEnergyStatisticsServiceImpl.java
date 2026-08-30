@@ -12,8 +12,8 @@ import org.jeecg.modules.bems.lighting.entity.LightingArea;
 import org.jeecg.modules.bems.lighting.entity.LightingCircuit;
 import org.jeecg.modules.bems.lighting.entity.LightingDistrict;
 import org.jeecg.modules.bems.lighting.entity.LightingEnergyHour;
-import org.jeecg.modules.bems.lighting.entity.LightingEnergyRead;
-import org.jeecg.modules.bems.lighting.mapper.LightingEnergyReadMapper;
+import org.jeecg.modules.bems.lighting.entity.LightingBoxTelemetryHistory;
+import org.jeecg.modules.bems.lighting.mapper.LightingBoxTelemetryHistoryMapper;
 import org.jeecg.modules.bems.lighting.service.ILightingAreaService;
 import org.jeecg.modules.bems.lighting.service.ILightingCircuitService;
 import org.jeecg.modules.bems.lighting.service.ILightingDistrictService;
@@ -34,6 +34,8 @@ import java.math.BigDecimal;
 import java.math.RoundingMode;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
+import java.time.ZoneId;
+import java.util.Date;
 import java.time.format.DateTimeFormatter;
 import java.util.ArrayList;
 import java.util.Arrays;
@@ -71,7 +73,7 @@ public class LightingEnergyStatisticsServiceImpl implements ILightingEnergyStati
     private final ILightingCircuitService circuitService;
     private final ILightingAreaService areaService;
     private final ILightingDistrictService districtService;
-    private final LightingEnergyReadMapper energyReadMapper;
+    private final LightingBoxTelemetryHistoryMapper boxHistoryMapper;
     private final RoleDataPermissionService roleDataPermissionService;
 
     @Override
@@ -343,9 +345,14 @@ public class LightingEnergyStatisticsServiceImpl implements ILightingEnergyStati
             }
         }
 
-        // 2. 查询区间内网关级总表读数
-        List<LightingEnergyRead> reads = energyReadMapper.selectGatewayReads(
-                areaIds.isEmpty() ? null : areaIds, gateway, start, end);
+        // 2. 查询区间内箱子遥测（累计电量 total_energy 来自箱子遥测历史表）
+        List<LightingBoxTelemetryHistory> reads = boxHistoryMapper.selectList(
+                new LambdaQueryWrapper<LightingBoxTelemetryHistory>()
+                        .in(areaIds != null && !areaIds.isEmpty(), LightingBoxTelemetryHistory::getAreaId, areaIds)
+                        .eq(gateway != null && !gateway.isEmpty(), LightingBoxTelemetryHistory::getGatewayCode, gateway)
+                        .ge(LightingBoxTelemetryHistory::getCollectTime, start)
+                        .lt(LightingBoxTelemetryHistory::getCollectTime, end)
+                        .orderByAsc(LightingBoxTelemetryHistory::getCollectTime));
         if (reads.isEmpty()) {
             return new ArrayList<>();
         }
@@ -353,7 +360,7 @@ public class LightingEnergyStatisticsServiceImpl implements ILightingEnergyStati
         // 3. 补充区域信息映射：查全部片区时 areaMap 为空，需按读数中出现的 areaId 批量加载
         if (areaMap.isEmpty()) {
             Set<Long> readAreaIds = reads.stream()
-                    .map(LightingEnergyRead::getAreaId)
+                    .map(LightingBoxTelemetryHistory::getAreaId)
                     .filter(Objects::nonNull)
                     .collect(Collectors.toSet());
             if (!readAreaIds.isEmpty()) {
@@ -367,19 +374,19 @@ public class LightingEnergyStatisticsServiceImpl implements ILightingEnergyStati
         }
 
         // 按网关分组（一个网关一块箱子）
-        Map<String, List<LightingEnergyRead>> byGateway = reads.stream()
+        Map<String, List<LightingBoxTelemetryHistory>> byGateway = reads.stream()
                 .collect(Collectors.groupingBy(r -> r.getGatewayCode() == null ? "未知" : r.getGatewayCode(),
                         LinkedHashMap::new, Collectors.toList()));
 
         Map<Long, LightingArea> finalAreaMap = areaMap;
         List<EnergyMeterReadVo> result = new ArrayList<>();
-        for (Map.Entry<String, List<LightingEnergyRead>> e : byGateway.entrySet()) {
+        for (Map.Entry<String, List<LightingBoxTelemetryHistory>> e : byGateway.entrySet()) {
             String gw = e.getKey();
             EnergyMeterReadVo vo = new EnergyMeterReadVo();
             vo.setGatewayCode(gw);
 
-            // 区域信息（取该网关任一条读数的区域）
-            LightingEnergyRead sample = e.getValue().get(0);
+            // 区域信息（取该网关任一条遥测的区域）
+            LightingBoxTelemetryHistory sample = e.getValue().get(0);
             if (sample.getAreaId() != null) {
                 LightingArea area = finalAreaMap.get(sample.getAreaId());
                 if (area != null) {
@@ -393,21 +400,23 @@ public class LightingEnergyStatisticsServiceImpl implements ILightingEnergyStati
                 }
             }
 
-            // 开始表底：开始时间前最近一条
-            LightingEnergyRead startRead = energyReadMapper.selectLastBefore(gw, null, start);
-            // 结束表底：结束时间前最近一条
-            LightingEnergyRead endRead = energyReadMapper.selectLastBefore(gw, null, end);
+            // 开始表底：开始时间前最近一条累计电量
+            LightingBoxTelemetryHistory startRead = boxHistoryMapper.selectLastBeforeByGateway(gw, start);
+            // 结束表底：结束时间前最近一条累计电量
+            LightingBoxTelemetryHistory endRead = boxHistoryMapper.selectLastBeforeByGateway(gw, end);
 
             if (startRead != null) {
-                vo.setStartTime(startRead.getReadTime());
-                vo.setStartValue(startRead.getValue() == null ? BigDecimal.ZERO : startRead.getValue());
+                vo.setStartTime(toLocalDateTime(startRead.getCollectTime()));
+                vo.setStartValue(startRead.getTotalEnergy() == null
+                        ? BigDecimal.ZERO : BigDecimal.valueOf(startRead.getTotalEnergy()));
             } else {
                 vo.setStartTime(start);
                 vo.setStartValue(BigDecimal.ZERO);
             }
             if (endRead != null) {
-                vo.setEndTime(endRead.getReadTime());
-                vo.setEndValue(endRead.getValue() == null ? BigDecimal.ZERO : endRead.getValue());
+                vo.setEndTime(toLocalDateTime(endRead.getCollectTime()));
+                vo.setEndValue(endRead.getTotalEnergy() == null
+                        ? BigDecimal.ZERO : BigDecimal.valueOf(endRead.getTotalEnergy()));
             } else {
                 vo.setEndTime(end);
                 vo.setEndValue(vo.getStartValue());
@@ -423,6 +432,12 @@ public class LightingEnergyStatisticsServiceImpl implements ILightingEnergyStati
         // 按累计用电量降序
         result.sort((a, b) -> b.getTotal().compareTo(a.getTotal()));
         return result;
+    }
+
+    /** java.util.Date 转 LocalDateTime（History 表的 collect_time 为 Date，Vo 的时间为 LocalDateTime） */
+    private LocalDateTime toLocalDateTime(Date date) {
+        return date == null ? null
+                : date.toInstant().atZone(ZoneId.systemDefault()).toLocalDateTime();
     }
 
     /** 解析片区名称 */
