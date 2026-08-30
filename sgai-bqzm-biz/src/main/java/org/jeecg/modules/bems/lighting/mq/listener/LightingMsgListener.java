@@ -27,6 +27,7 @@ import org.springframework.amqp.rabbit.annotation.RabbitListener;
 import java.math.BigDecimal;
 import java.time.LocalDateTime;
 import java.time.format.DateTimeFormatter;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.stream.Collectors;
 
@@ -89,8 +90,7 @@ public class LightingMsgListener {
                             circuitService.mqControl(item.getGatewayCode(),String.valueOf(item.getAreaID()),String.valueOf(item.getCircuitCode()),LightingCircuit.STATUS_MAP.get(value));
                             // 更新通讯状态
                             circuitService.updateComstat(item.getGatewayCode(),String.valueOf(item.getAreaID()),String.valueOf(item.getCircuitCode()), LightingCircuit.COMSTAT_ONLINE);
-                            // 发送消息
-                            sendService.sendLightingCircuitComstat(item.getGatewayCode(),String.valueOf(item.getAreaID()),String.valueOf(item.getCircuitCode()));
+                            // 注：在线/离线状态已改由 DataType=4 整体推送，不再发延迟离线判定消息
                         }else{
                             // 状态错误，设置为离线
                             circuitService.updateComstat(item.getGatewayCode(),String.valueOf(item.getAreaID()),String.valueOf(item.getCircuitCode()), LightingCircuit.COMSTAT_OFFLINE);
@@ -514,8 +514,7 @@ public class LightingMsgListener {
             // 更新通讯状态为在线
             circuitService.updateComstat(space, areaCode, circuit.getCircuitCode(), LightingCircuit.COMSTAT_ONLINE);
 
-            // 发送离线延迟消息（areaCode 须传真实区域编码，与上方 updateComstat 一致，否则离线消费时按编码匹配不到区域）
-            sendService.sendLightingCircuitComstat(space, areaCode, circuit.getCircuitCode());
+            // 注：在线/离线状态已改由 DataType=4 整体推送，不再发延迟离线判定消息
 
 //                log.info("【北区】更新回路状态：circuit_code={}, status={}", fullCircuitCode, status);
         }else{
@@ -613,10 +612,14 @@ public class LightingMsgListener {
     }
 
     /**
-     * 特殊处理：DataType=4 设备在线/离线状态（904/905/906 空间按网关整体设置）
+     * 特殊处理：DataType=4 设备在线/离线状态（覆盖空间与 DataType=0 一致：903/904/905/906）
      * 消息格式：{"DataType":"4","AreaID":"0","CircuitCode":"null","Value":"1","GatewayCode":"154.2"}
-     * Value：1=在线、0=离线；GatewayCode 对应整体：54(904)、154.100(905)、154.2(906)
-     * 网关整体要么全在线、要么全离线，即把该网关对应空间下所有回路的 comstat 统一设置
+     * Value：1=在线、0=离线
+     * 定位规则（与 DataType=0 一致）：
+     *  - GatewayCode 11~44：903 空间，拼 10.22.160.{网关} 匹配具体区域，该区域下所有回路整体设置
+     *  - GatewayCode 54：904 空间所有回路整体设置
+     *  - GatewayCode 154.100：905 空间所有回路整体设置
+     *  - GatewayCode 154.2：906 空间所有回路整体设置
      */
     private void handleBqOnlineStatus(JSONObject msg){
         String gatewayCode = msg.getString("GatewayCode");
@@ -626,38 +629,58 @@ public class LightingMsgListener {
             return;
         }
         String comstat = "1".equals(value.trim()) ? LightingCircuit.COMSTAT_ONLINE : LightingCircuit.COMSTAT_OFFLINE;
-        // 网关 -> 空间
-        String space = null;
-        if("54".equals(gatewayCode)){
-            space = "904";
-        } else if("154.100".equals(gatewayCode)){
-            space = "905";
-        } else if("154.2".equals(gatewayCode)){
-            space = "906";
+        List<Long> areaIds = new ArrayList<>();
+        int gw = -1;
+        try {
+            gw = Integer.parseInt(gatewayCode.trim());
+        } catch (NumberFormatException ignored) {
         }
-        if(space == null){
-            log.warn("【在线状态】DataType=4 未知网关，跳过：gatewayCode={}", gatewayCode);
+        if (gw >= 11 && gw <= 44) {
+            // 903 空间：按 10.22.160.{网关} 匹配具体区域（按单网关）
+            LightingArea area = areaService.getByCode("903", "10.22.160." + gatewayCode);
+            if (area == null) {
+                log.warn("【在线状态】DataType=4 未找到 903 区域，gatewayCode={}", gatewayCode);
+                return;
+            }
+            areaIds.add(area.getId());
+        } else {
+            // 904/905/906 等：按网关映射空间，取该空间所有区域
+            String space = null;
+            if("54".equals(gatewayCode)){
+                space = "904";
+            } else if("154.100".equals(gatewayCode)){
+                space = "905";
+            } else if("154.2".equals(gatewayCode)){
+                space = "906";
+            }
+            if(space == null){
+                log.warn("【在线状态】DataType=4 未知网关，跳过：gatewayCode={}", gatewayCode);
+                return;
+            }
+            List<LightingArea> areas = areaService.list(new LambdaQueryWrapper<LightingArea>()
+                    .eq(LightingArea::getSpace, space));
+            if(areas == null || areas.isEmpty()){
+                log.warn("【在线状态】空间 {} 无区域，跳过", space);
+                return;
+            }
+            for(LightingArea a : areas){
+                areaIds.add(a.getId());
+            }
+        }
+        if(areaIds.isEmpty()){
             return;
         }
-        // 按空间查出所有区域及其回路
-        List<LightingArea> areas = areaService.list(new LambdaQueryWrapper<LightingArea>()
-                .eq(LightingArea::getSpace, space));
-        if(areas == null || areas.isEmpty()){
-            log.warn("【在线状态】空间 {} 无区域，跳过", space);
-            return;
-        }
-        List<Long> areaIds = areas.stream().map(LightingArea::getId).collect(Collectors.toList());
         List<LightingCircuit> circuits = circuitService.list(new LambdaQueryWrapper<LightingCircuit>()
                 .in(LightingCircuit::getAreaId, areaIds));
         if(circuits == null || circuits.isEmpty()){
-            log.warn("【在线状态】空间 {} 无回路，跳过", space);
+            log.warn("【在线状态】网关 {} 无回路，跳过", gatewayCode);
             return;
         }
-        // 整体更新该空间所有回路的通讯状态
+        // 整体更新该网关对应区域/空间下所有回路的通讯状态
         circuitService.update(new LambdaUpdateWrapper<LightingCircuit>()
                 .in(LightingCircuit::getAreaId, areaIds)
                 .set(LightingCircuit::getComstat, comstat));
-        log.info("【在线状态】DataType=4 网关{}整体设为{}，空间{}共更新回路{}个", gatewayCode, comstat, space, circuits.size());
+        log.info("【在线状态】DataType=4 网关{}整体设为{}，共更新回路{}个", gatewayCode, comstat, circuits.size());
     }
 
     /**
@@ -713,8 +736,7 @@ public class LightingMsgListener {
         // 更新通讯状态为在线
         circuitService.updateComstat("904", areaIdStr, circuitCode, LightingCircuit.COMSTAT_ONLINE);
 
-        // 发送离线延迟消息
-        sendService.sendLightingCircuitComstat("904", areaIdStr, circuitCode);
+        // 注：在线/离线状态已改由 DataType=4 整体推送，不再发延迟离线判定消息
 
         log.info("【公区904】回路状态更新完成：areaId={}, circuitCode={}, status={}", areaIdStr, circuitCode, status);
     }
