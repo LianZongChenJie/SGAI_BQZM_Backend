@@ -57,5 +57,5 @@ public interface ILightingEnergyStatisticsService {
      * @param startTime  开始时间（yyyy-MM-dd HH:mm:ss，可选）
      * @param endTime    结束时间（yyyy-MM-dd HH:mm:ss，可选）
      */
-    List<EnergyMeterReadVo> meterReads(Long districtId, String gateway, String startTime, String endTime);
+    List<EnergyMeterReadVo> meterReads(Long districtId, String areaCode, String gateway, String startTime, String endTime);
 }

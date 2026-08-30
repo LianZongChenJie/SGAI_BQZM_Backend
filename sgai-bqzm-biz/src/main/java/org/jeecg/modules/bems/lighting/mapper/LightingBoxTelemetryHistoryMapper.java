@@ -13,13 +13,20 @@ import java.util.List;
 public interface LightingBoxTelemetryHistoryMapper extends BaseMapper<LightingBoxTelemetryHistory> {
 
     /**
-     * 查询某时间窗口内有累计电量的网关去重集合（用于小时聚合）
+     * 查询某时间窗口内有累计电量的网关去重集合（用于小时聚合/区间抄表）
+     * 可传入 areaIds 按区域过滤（为空时不加区域条件）
      */
-    @Select("SELECT DISTINCT gateway_code FROM lighting_box_telemetry_history " +
-            "WHERE collect_time >= #{start} AND collect_time < #{end} " +
-            "AND gateway_code IS NOT NULL AND total_energy IS NOT NULL")
+    @Select("<script>" +
+            "SELECT DISTINCT gateway_code FROM lighting_box_telemetry_history " +
+            "WHERE collect_time &gt;= #{start} AND collect_time &lt; #{end} " +
+            "AND gateway_code IS NOT NULL AND total_energy IS NOT NULL " +
+            "<if test='areaIds != null and areaIds.size() &gt; 0'>" +
+            "AND area_id IN <foreach collection='areaIds' item='aid' open='(' separator=',' close=')'>#{aid}</foreach>" +
+            "</if>" +
+            "</script>")
     List<LightingBoxTelemetryHistory> selectDistinctGateways(@Param("start") LocalDateTime start,
-                                                             @Param("end") LocalDateTime end);
+                                                             @Param("end") LocalDateTime end,
+                                                             @Param("areaIds") List<Long> areaIds);
 
     /**
      * 查询指定时间之前最近的一条箱子遥测（按网关，用于取累计电量基准值）

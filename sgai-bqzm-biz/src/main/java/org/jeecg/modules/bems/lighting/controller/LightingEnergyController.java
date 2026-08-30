@@ -96,18 +96,20 @@ public class LightingEnergyController {
     /**
      * 电表读数区间查询（汇总表页签：按片区/箱子/时间区间查表底与累计用电量）
      */
-    @ApiOperation("电表读数区间查询（按片区/箱子/时间区间）")
+    @ApiOperation("电表读数区间查询（按片区/区域/箱子/时间区间）")
     @ApiImplicitParams({
             @ApiImplicitParam(name = "districtId", value = "片区ID", paramType = "query", dataType = "long"),
+            @ApiImplicitParam(name = "areaCode", value = "区域编号（area_code），可精确到一个区域", paramType = "query", dataType = "string"),
             @ApiImplicitParam(name = "gateway", value = "网关编号", paramType = "query", dataType = "string"),
             @ApiImplicitParam(name = "startTime", value = "开始时间（yyyy-MM-dd HH:mm:ss）", paramType = "query", dataType = "string"),
             @ApiImplicitParam(name = "endTime", value = "结束时间（yyyy-MM-dd HH:mm:ss）", paramType = "query", dataType = "string")
     })
     @GetMapping("/meterReads")
     public Result<List<EnergyMeterReadVo>> meterReads(@RequestParam(required = false) Long districtId,
+                                                      @RequestParam(required = false) String areaCode,
                                                       @RequestParam(required = false) String gateway,
                                                       @RequestParam(required = false) String startTime,
                                                       @RequestParam(required = false) String endTime) {
-        return Result.ok(statisticsService.meterReads(districtId, gateway, startTime, endTime));
+        return Result.ok(statisticsService.meterReads(districtId, areaCode, gateway, startTime, endTime));
     }
 }

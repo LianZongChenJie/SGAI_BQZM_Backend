@@ -33,7 +33,7 @@ public class LightingEnergyHourServiceImpl extends ServiceImpl<LightingEnergyHou
     public void aggregateHour(LocalDateTime hourStart) {
         LocalDateTime hourEnd = hourStart.plusHours(1);
         // 该小时内有累计电量的箱子（网关）去重集合
-        List<LightingBoxTelemetryHistory> gateways = boxHistoryMapper.selectDistinctGateways(hourStart, hourEnd);
+        List<LightingBoxTelemetryHistory> gateways = boxHistoryMapper.selectDistinctGateways(hourStart, hourEnd, null);
         if (CollectionUtil.isEmpty(gateways)) {
             log.debug("【能耗统计】小时 {} 无箱子遥测累计电量，跳过", hourStart);
             return;
