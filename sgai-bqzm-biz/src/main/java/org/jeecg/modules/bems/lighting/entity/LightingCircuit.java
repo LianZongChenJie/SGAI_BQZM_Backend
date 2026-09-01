@@ -129,6 +129,20 @@ public class LightingCircuit {
     private String spaceName;
 
     /**
+     * 所属片区ID（非表字段，查询时关联区域填充）
+     */
+    @TableField(exist = false)
+    @ApiModelProperty(value = "所属片区ID")
+    private Long districtId;
+
+    /**
+     * 所属片区名称（非表字段，查询时关联区域/片区填充）
+     */
+    @TableField(exist = false)
+    @ApiModelProperty(value = "所属片区名称")
+    private String districtName;
+
+    /**
      * 额定功率（kW）
      */
     @ApiModelProperty(value = "额定功率（kW）")

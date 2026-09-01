@@ -22,9 +22,10 @@ public class RoleDataPermission extends BaseEntity {
     public static final String TYPE_SPACE = "SPACE";
     public static final String TYPE_LIGHTING = "LIGHTING";
     public static final String TYPE_DISTRICT = "DISTRICT";
+    public static final String TYPE_TAG = "TAG";
 
     /** 已有显式 JSON 字段的权限类型，新增类型时在此处追加 */
-    public static final Set<String> EXPLICIT_TYPES = Set.of(TYPE_CATEGORY, TYPE_SPACE, TYPE_LIGHTING, TYPE_DISTRICT);
+    public static final Set<String> EXPLICIT_TYPES = Set.of(TYPE_CATEGORY, TYPE_SPACE, TYPE_LIGHTING, TYPE_DISTRICT, TYPE_TAG);
 
     @ApiModelProperty(value = "角色编码")
     private String roleCode;

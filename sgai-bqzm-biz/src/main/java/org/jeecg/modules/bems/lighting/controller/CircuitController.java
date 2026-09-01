@@ -10,16 +10,22 @@ import org.jeecg.common.api.vo.Result;
 import org.jeecg.modules.bems.lighting.dto.LightingCircuitQueryDto;
 import org.jeecg.modules.bems.lighting.entity.LightingArea;
 import org.jeecg.modules.bems.lighting.entity.LightingCircuit;
+import org.jeecg.modules.bems.lighting.entity.LightingDistrict;
 import org.jeecg.modules.bems.lighting.entity.LightingPlan;
 import org.jeecg.modules.bems.lighting.entity.LightingPlanExecutionTime;
 import org.jeecg.modules.bems.lighting.service.ILightingAreaService;
 import org.jeecg.modules.bems.lighting.service.ILightingCircuitService;
+import org.jeecg.modules.bems.lighting.service.ILightingDistrictService;
 import org.jeecg.modules.bems.lighting.service.ILightingPlanService;
 import org.jeecg.modules.bems.permission.annotation.ButtonPermission;
+import org.jeecg.modules.bems.permission.annotation.DataPermission;
+import org.jeecg.modules.bems.permission.holder.DataPermissionHolder;
+import org.jeecg.modules.bems.permission.vo.UserDataScope;
 import org.springframework.web.bind.annotation.*;
 
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import java.util.function.Function;
 import java.util.stream.Collectors;
 
@@ -37,6 +43,8 @@ public class CircuitController {
 
     private final ILightingAreaService areaService;
 
+    private final ILightingDistrictService districtService;
+
     private final ILightingPlanService planService;
 
     @ApiOperation("分页查询回路列表")
@@ -46,16 +54,36 @@ public class CircuitController {
     }
 
     @ApiOperation("查询所有回路（含区域名称）")
+    @DataPermission
     @GetMapping("/all")
     public Result<List<LightingCircuit>> all(){
         List<LightingCircuit> circuits = service.list();
         Map<Long,LightingArea> areaMap = areaService.list()
                 .stream().collect(Collectors.toMap(LightingArea::getId, Function.identity()));
+        // 数据权限：回路表无 district_id，需通过"回路->区域->片区"过滤
+        // 取当前用户允许的片区(district)集合，为空则不过滤（看全部）
+        UserDataScope dataScope = DataPermissionHolder.getDataScope();
+        Set<Long> allowedDistricts = dataScope != null ? dataScope.getPermissionIds("DISTRICT") : null;
+        if (allowedDistricts != null && !allowedDistricts.isEmpty()) {
+            circuits.removeIf(c -> {
+                LightingArea area = areaMap.get(c.getAreaId());
+                // 回路无对应区域 或 区域不在允许片区 -> 过滤掉
+                return area == null || area.getDistrictId() == null || !allowedDistricts.contains(area.getDistrictId());
+            });
+        }
+        // 片区 map（用于回路返回片区id和名称）
+        Map<Long, LightingDistrict> districtMap = districtService.list()
+                .stream().collect(Collectors.toMap(LightingDistrict::getId, Function.identity()));
         for (LightingCircuit circuit : circuits) {
             LightingArea area = areaMap.get(circuit.getAreaId());
             if(area != null){
                 circuit.setAreaName(area.getAreaName());
                 circuit.setSpaceName(area.getSpaceName());
+                circuit.setDistrictId(area.getDistrictId());
+                LightingDistrict district = area.getDistrictId() != null ? districtMap.get(area.getDistrictId()) : null;
+                if(district != null){
+                    circuit.setDistrictName(district.getDistrictName());
+                }
             }
         }
         return Result.ok(circuits);

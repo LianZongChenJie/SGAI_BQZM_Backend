@@ -95,16 +95,6 @@ public class LightingSceneServiceImpl extends ServiceImpl<LightingSceneMapper, L
                         .like(StringUtils.isNotEmpty(params.getTagName()), LightingScene::getTagName, params.getTagName())
                         .like(StringUtils.isNotEmpty(params.getProgramSceneIds()), LightingScene::getProgramSceneIds, params.getProgramSceneIds())
                         .orderByAsc(LightingScene::getSort);
-        // 数据权限：bqzm 角色展示全部场景；其他角色仅展示"完全归属于片区8(服贸会)"的场景
-        if (!isBqzmRole()) {
-            Set<Long> allowedSceneIds = computeDistrictSceneIds();
-            if (CollectionUtil.isEmpty(allowedSceneIds)) {
-                // 无可访问场景：使用一个必然不存在的 id，保证不返回数据且避免 IN () 语法错误
-                allowedSceneIds = new HashSet<>();
-                allowedSceneIds.add(-1L);
-            }
-            wrapper.in(LightingScene::getId, allowedSceneIds);
-        }
         Page<LightingScene> scenePage = super.page(new Page<>(params.getPageNo(), params.getPageSize()), wrapper);
         List<LightingScene> scenes = scenePage.getRecords();
         Page<LightingPlan> page = new Page<>(scenePage.getCurrent(), scenePage.getSize(), scenePage.getTotal());

@@ -174,7 +174,56 @@ public class LightingPlanServiceImpl extends ServiceImpl<LightingPlanMapper, Lig
         if(plan.getSort() == null){
             plan.setSort(getMaxSort() + 1);
         }
+        // 按关联类型计算并填充片区id
+        plan.setDistrictId(computeDistrictId(plan));
         super.save(plan);
+    }
+
+    /**
+     * 计算计划关联的片区id（新增时填充 district_id 字段）
+     * - 场景：仅关联一个场景时，取该场景的 tagId 作为片区id
+     * - 回路：聚合各回路所属区域(district_id)的片区id，去重后仅一个时存入
+     * - 区域：聚合各区域(district_id)的片区id，去重后仅一个时存入
+     * 多个片区id / 无有效关联时返回 null
+     */
+    private Long computeDistrictId(LightingPlan plan) {
+        Set<Long> ids = parseRelIds(plan.getRelIds());
+        if (CollectionUtil.isEmpty(ids)) {
+            return null;
+        }
+        String relType = plan.getRelType();
+        // 场景：仅一个场景时取 tagId
+        if (LightingPlan.REL_TYPE_SCENE.equals(relType)) {
+            if (ids.size() == 1) {
+                LightingScene scene = lightingSceneService.getById(ids.iterator().next());
+                if (scene != null && StringUtils.isNotBlank(scene.getTagId())) {
+                    try {
+                        return Long.parseLong(scene.getTagId().trim());
+                    } catch (NumberFormatException e) {
+                        log.warn("场景 tagId 非数字，忽略片区id: sceneId={}, tagId={}", scene.getId(), scene.getTagId());
+                    }
+                }
+            }
+            return null;
+        }
+        // 回路 / 区域：聚合片区id（去重）
+        Set<Long> districtIds = new HashSet<>();
+        if (LightingPlan.REL_TYPE_CIRCUIT.equals(relType)) {
+            List<LightingCircuit> circuits = lightingCircuitService.listByIds(ids);
+            // 回路无 district_id，需通过回路.area_id 关联区域取 district_id
+            Set<Long> areaIds = circuits.stream().map(LightingCircuit::getAreaId)
+                    .filter(Objects::nonNull).collect(Collectors.toSet());
+            if (!areaIds.isEmpty()) {
+                List<LightingArea> areas = lightingAreaService.listByIds(areaIds);
+                areas.stream().map(LightingArea::getDistrictId).filter(Objects::nonNull)
+                        .forEach(districtIds::add);
+            }
+        } else if (LightingPlan.REL_TYPE_AREA.equals(relType)) {
+            List<LightingArea> areas = lightingAreaService.listByIds(ids);
+            areas.stream().map(LightingArea::getDistrictId).filter(Objects::nonNull)
+                    .forEach(districtIds::add);
+        }
+        return districtIds.size() == 1 ? districtIds.iterator().next() : null;
     }
 
     private Long getMaxSort(){

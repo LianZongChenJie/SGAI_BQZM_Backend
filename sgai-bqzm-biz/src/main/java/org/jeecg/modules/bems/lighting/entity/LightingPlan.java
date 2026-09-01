@@ -110,6 +110,12 @@ public class LightingPlan extends BaseEntity {
     private Long scheduleJobId;
 
     /**
+     * 片区ID（表字段。新增计划时按关联类型聚合填充：
+     * 场景=单场景tagId；回路/区域=聚合片区id，仅一个时存入）
+     */
+    private Long districtId;
+
+    /**
      * 计划执行信息
      */
     @TableField(exist = false)

@@ -13,6 +13,7 @@ import org.jeecg.modules.bems.lighting.dto.LightingSpaceScenesVo;
 import org.jeecg.modules.bems.lighting.entity.LightingPlan;
 import org.jeecg.modules.bems.lighting.service.ILightingSceneService;
 import org.jeecg.modules.bems.permission.annotation.ButtonPermission;
+import org.jeecg.modules.bems.permission.annotation.DataPermission;
 import org.springframework.web.bind.annotation.*;
 
 import javax.servlet.http.HttpServletResponse;
@@ -35,6 +36,7 @@ public class LightingSceneController {
      * 分页查询场景列表（出参结构同 /bems/lighting/plan/listPage）
      */
     @ApiOperation("分页查询场景列表（出参结构同 plan/listPage）")
+    @DataPermission
     @GetMapping("/listPage")
     public Result<IPage<LightingPlan>> listPage(LightingSceneQueryDto params) {
         return Result.ok(service.listPage(params));

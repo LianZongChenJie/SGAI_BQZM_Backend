@@ -11,6 +11,8 @@ import io.swagger.annotations.ApiModelProperty;
 import lombok.Data;
 import lombok.EqualsAndHashCode;
 import org.jeecg.modules.bems.entity.BaseEntity;
+import org.jeecg.modules.bems.permission.annotation.DataPermissionField;
+import org.jeecg.modules.bems.permission.entity.RoleDataPermission;
 
 import java.util.List;
 
@@ -91,7 +93,9 @@ public class LightingScene extends BaseEntity {
 
     /**
      * 标签ID（冗余存储，用于场景分组/筛选展示）
+     * 数据权限字段：permission_type='TAG' 时按 tag_id 过滤
      */
+    @DataPermissionField(type = RoleDataPermission.TYPE_TAG, value = "tag_id")
     @ApiModelProperty(value = "标签ID")
     private String tagId;
 
