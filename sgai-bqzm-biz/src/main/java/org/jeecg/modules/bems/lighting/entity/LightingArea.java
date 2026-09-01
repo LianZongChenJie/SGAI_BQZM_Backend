@@ -208,6 +208,24 @@ public class LightingArea {
     private Integer pendingMsgCount;
 
     /**
+     * 是否有箱子（有/无）
+     */
+    @ApiModelProperty(value = "是否有箱子（有/无）")
+    private String hasBox;
+
+    /**
+     * 是否报警（报警/正常）
+     */
+    @ApiModelProperty(value = "是否报警（报警/正常）")
+    private String alarmFlag;
+
+    /**
+     * 报警数量
+     */
+    @ApiModelProperty(value = "报警数量")
+    private Integer alarmCount;
+
+    /**
      * 片区名称（非表字段，查询时关联填充）
      */
     @TableField(exist = false)

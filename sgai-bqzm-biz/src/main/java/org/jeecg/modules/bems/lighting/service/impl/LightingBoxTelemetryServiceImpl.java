@@ -14,11 +14,16 @@ import org.jeecg.modules.bems.lighting.mapper.LightingBoxTelemetryMapper;
 import org.jeecg.modules.bems.lighting.service.ILightingAreaService;
 import org.jeecg.modules.bems.lighting.service.ILightingBoxTelemetryService;
 import org.jeecg.modules.bems.lighting.service.ILightingDistrictService;
+import org.jeecg.modules.bems.lighting.vo.BoxTreeAreaVo;
+import org.jeecg.modules.bems.lighting.vo.BoxTreeBoxVo;
+import org.jeecg.modules.bems.lighting.vo.BoxTreeVo;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.text.ParseException;
 import java.text.SimpleDateFormat;
+import java.util.ArrayList;
+import java.util.Collections;
 import java.util.Date;
 import java.util.HashMap;
 import java.util.List;
@@ -135,6 +140,91 @@ public class LightingBoxTelemetryServiceImpl extends ServiceImpl<LightingBoxTele
                 box.setAreaName(areaNameMap.get(box.getAreaId()));
             }
         }
+    }
+
+    /**
+     * 片区-区域-箱子 三级树结构
+     * 第一层：片区(id/名称)；第二层：区域(状态/是否报警/报警数量/是否有箱子)；第三层：箱子(名称/电压电流等)
+     * 每个区域最多一个箱子：有箱显示"箱1"，无箱显示"箱1（无箱）"占位
+     */
+    @Override
+    public List<BoxTreeVo> boxTree() {
+        // 1. 查所有片区
+        List<LightingDistrict> districts = districtService.list(new LambdaQueryWrapper<LightingDistrict>()
+                .orderByAsc(LightingDistrict::getSort));
+        // 2. 查所有区域，按 districtId 分组
+        List<LightingArea> areas = areaService.list(new LambdaQueryWrapper<LightingArea>()
+                .orderByAsc(LightingArea::getSort));
+        Map<Long, List<LightingArea>> areasByDistrict = (areas == null ? Collections.<LightingArea>emptyList() : areas).stream()
+                .filter(a -> a.getDistrictId() != null)
+                .collect(Collectors.groupingBy(LightingArea::getDistrictId));
+        // 3. 查所有箱子（快照），按 areaId 分组
+        List<LightingBoxTelemetry> boxes = boxMapper.selectList(new LambdaQueryWrapper<LightingBoxTelemetry>());
+        Map<Long, List<LightingBoxTelemetry>> boxesByArea = (boxes == null ? Collections.<LightingBoxTelemetry>emptyList() : boxes).stream()
+                .filter(b -> b.getAreaId() != null)
+                .collect(Collectors.groupingBy(LightingBoxTelemetry::getAreaId));
+
+        List<BoxTreeVo> result = new ArrayList<>();
+        for (LightingDistrict district : districts) {
+            BoxTreeVo districtNode = new BoxTreeVo();
+            districtNode.setId(district.getId());
+            districtNode.setDistrictName(district.getDistrictName());
+            List<BoxTreeAreaVo> areaNodes = new ArrayList<>();
+
+            List<LightingArea> districtAreas = areasByDistrict.getOrDefault(district.getId(), Collections.emptyList());
+            for (LightingArea area : districtAreas) {
+                BoxTreeAreaVo areaNode = new BoxTreeAreaVo();
+                areaNode.setId(area.getId());
+                areaNode.setAreaName(area.getAreaName());
+                areaNode.setStatus(area.getStatus());
+                areaNode.setAlarmFlag(area.getAlarmFlag());
+                areaNode.setAlarmCount(area.getAlarmCount());
+                areaNode.setHasBox(area.getHasBox());
+                areaNode.setBoxes(buildBoxNodes(boxesByArea.getOrDefault(area.getId(), Collections.emptyList())));
+                areaNodes.add(areaNode);
+            }
+            districtNode.setAreas(areaNodes);
+            result.add(districtNode);
+        }
+        return result;
+    }
+
+    /**
+     * 组装区域下的箱子节点
+     * 每个区域最多一个箱子：有箱显示"箱1"，无箱显示"箱1（无箱）"占位
+     */
+    private List<BoxTreeBoxVo> buildBoxNodes(List<LightingBoxTelemetry> boxes) {
+        List<BoxTreeBoxVo> nodeList = new ArrayList<>();
+        if (boxes == null || boxes.isEmpty()) {
+            // 无箱：展示占位节点
+            BoxTreeBoxVo empty = new BoxTreeBoxVo();
+            empty.setBoxName("箱1（无箱）");
+            empty.setHasBox(false);
+            nodeList.add(empty);
+            return nodeList;
+        }
+        int index = 1;
+        for (LightingBoxTelemetry box : boxes) {
+            BoxTreeBoxVo node = new BoxTreeBoxVo();
+            node.setGatewayCode(box.getGatewayCode());
+            node.setBoxName("箱" + index);
+            node.setHasBox(true);
+            node.setVoltageA(box.getVoltageA());
+            node.setVoltageB(box.getVoltageB());
+            node.setVoltageC(box.getVoltageC());
+            node.setCurrentA(box.getCurrentA());
+            node.setCurrentB(box.getCurrentB());
+            node.setCurrentC(box.getCurrentC());
+            node.setActivePower(box.getActivePower());
+            node.setReactivePower(box.getReactivePower());
+            node.setApparentPower(box.getApparentPower());
+            node.setPowerFactor(box.getPowerFactor());
+            node.setTotalEnergy(box.getTotalEnergy());
+            node.setCollectTime(box.getCollectTime());
+            nodeList.add(node);
+            index++;
+        }
+        return nodeList;
     }
 
     @Override

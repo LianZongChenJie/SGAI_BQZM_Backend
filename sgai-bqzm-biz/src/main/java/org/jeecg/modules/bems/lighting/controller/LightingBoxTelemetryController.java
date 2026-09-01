@@ -9,6 +9,7 @@ import org.jeecg.common.api.vo.Result;
 import org.jeecg.modules.bems.lighting.entity.LightingBoxTelemetry;
 import org.jeecg.modules.bems.lighting.entity.LightingBoxTelemetryHistory;
 import org.jeecg.modules.bems.lighting.service.ILightingBoxTelemetryService;
+import org.jeecg.modules.bems.lighting.vo.BoxTreeVo;
 import org.jeecg.modules.bems.permission.annotation.DataPermission;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.RequestMapping;
@@ -38,6 +39,13 @@ public class LightingBoxTelemetryController {
     @GetMapping("/list")
     public Result<List<LightingBoxTelemetry>> list() {
         return Result.ok(boxTelemetryService.listBoxes());
+    }
+
+    @ApiOperation("片区-区域-箱子 三级树结构")
+    @DataPermission
+    @GetMapping("/boxTree")
+    public Result<List<BoxTreeVo>> boxTree() {
+        return Result.ok(boxTelemetryService.boxTree());
     }
 
     @ApiOperation("箱子历史数据")

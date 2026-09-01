@@ -116,6 +116,12 @@ public class LightingCircuit {
     private String comstat;
 
     /**
+     * 是否报警（报警/正常）
+     */
+    @ApiModelProperty(value = "是否报警（报警/正常）")
+    private String alarmFlag;
+
+    /**
      * 空间名称
      */
     @TableField(exist = false)
