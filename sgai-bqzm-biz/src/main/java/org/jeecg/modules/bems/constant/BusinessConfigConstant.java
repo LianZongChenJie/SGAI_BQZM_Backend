@@ -50,7 +50,7 @@ public class BusinessConfigConstant {
     /**
      * bqzm 角色编码：拥有该角色时读取当前配置，否则读取 ":other" 配置
      */
-    public static final String ROLE_BQZM = "bqzm";
+    public static final String ROLE_BQZM = "role:bqzm";
 
 
 }

@@ -265,7 +265,9 @@ public class LightingHomeServiceImpl implements ILightingHomeService {
                 return false;
             }
             for (String roleCode : roleCodeStr.split(",")) {
-                if (BusinessConfigConstant.ROLE_BQZM.equals(roleCode.trim())) {
+                String roleBqzm = BusinessConfigConstant.ROLE_BQZM;
+                String valueByKey1 = businessConfigService.getValueByKey(roleBqzm);
+                if (valueByKey1.equals(roleCode.trim())) {
                     return true;
                 }
             }
