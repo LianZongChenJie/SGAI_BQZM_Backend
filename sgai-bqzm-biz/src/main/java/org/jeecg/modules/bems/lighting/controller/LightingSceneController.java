@@ -4,6 +4,7 @@ import com.baomidou.mybatisplus.core.metadata.IPage;
 import io.swagger.annotations.Api;
 import io.swagger.annotations.ApiOperation;
 import lombok.AllArgsConstructor;
+import org.apache.shiro.authz.annotation.RequiresPermissions;
 import org.jeecg.common.api.vo.Result;
 import org.jeecg.modules.bems.lighting.dto.LightingSceneDetailDto;
 import org.jeecg.modules.bems.lighting.dto.LightingSceneDto;
@@ -11,6 +12,7 @@ import org.jeecg.modules.bems.lighting.dto.LightingSceneQueryDto;
 import org.jeecg.modules.bems.lighting.dto.LightingSpaceScenesVo;
 import org.jeecg.modules.bems.lighting.entity.LightingPlan;
 import org.jeecg.modules.bems.lighting.service.ILightingSceneService;
+import org.jeecg.modules.bems.permission.annotation.ButtonPermission;
 import org.springframework.web.bind.annotation.*;
 
 import javax.servlet.http.HttpServletResponse;
@@ -51,6 +53,7 @@ public class LightingSceneController {
      * 新增场景
      */
     @ApiOperation("新增场景（兼容 planName+relType+relIds+operationType 入参）")
+    @ButtonPermission("northAreaLighting:switch")
     @PostMapping("/add")
     public Result<String> add(@RequestBody LightingSceneDto dto) {
         service.add(dto);

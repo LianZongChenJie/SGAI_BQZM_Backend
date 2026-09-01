@@ -5,6 +5,7 @@ import io.swagger.annotations.Api;
 import io.swagger.annotations.ApiOperation;
 import lombok.AllArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.apache.shiro.authz.annotation.RequiresPermissions;
 import org.jeecg.common.api.vo.Result;
 import org.jeecg.modules.bems.lighting.dto.LightingCircuitQueryDto;
 import org.jeecg.modules.bems.lighting.entity.LightingArea;
@@ -14,6 +15,7 @@ import org.jeecg.modules.bems.lighting.entity.LightingPlanExecutionTime;
 import org.jeecg.modules.bems.lighting.service.ILightingAreaService;
 import org.jeecg.modules.bems.lighting.service.ILightingCircuitService;
 import org.jeecg.modules.bems.lighting.service.ILightingPlanService;
+import org.jeecg.modules.bems.permission.annotation.ButtonPermission;
 import org.springframework.web.bind.annotation.*;
 
 import java.util.List;
@@ -64,6 +66,7 @@ public class CircuitController {
      * @param id 回路id
      */
     @ApiOperation("开启回路")
+    @ButtonPermission("northAreaLighting:switch")
     @PostMapping("/open")
     public Result<String> open(@RequestParam Long id){
         service.open(id);
@@ -75,6 +78,7 @@ public class CircuitController {
      * @param id 回路id
      */
     @ApiOperation("关闭回路")
+    @ButtonPermission("northAreaLighting:switch")
     @PostMapping("/close")
     public Result<String> close(@RequestParam Long id){
         service.close(id);

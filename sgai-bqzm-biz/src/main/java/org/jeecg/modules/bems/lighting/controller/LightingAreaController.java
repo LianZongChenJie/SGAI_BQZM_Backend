@@ -4,11 +4,13 @@ import io.swagger.annotations.Api;
 import io.swagger.annotations.ApiOperation;
 import lombok.AllArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.apache.shiro.authz.annotation.RequiresPermissions;
 import org.jeecg.common.api.vo.Result;
 import org.jeecg.modules.bems.lighting.dto.LightingAreaQueryDto;
 import org.jeecg.modules.bems.lighting.dto.LightingSpaceDto;
 import org.jeecg.modules.bems.lighting.entity.LightingArea;
 import org.jeecg.modules.bems.lighting.service.ILightingAreaService;
+import org.jeecg.modules.bems.permission.annotation.ButtonPermission;
 import org.jeecg.modules.bems.permission.annotation.DataPermission;
 import org.jeecg.modules.bems.permission.annotation.DataPermissionField;
 import org.springframework.web.bind.annotation.*;
@@ -79,6 +81,7 @@ public class LightingAreaController {
      * @param id 区域id
      */
     @ApiOperation("开启区域照明")
+    @ButtonPermission("northAreaLighting:switch")
     @PostMapping("/open")
     public Result<String> open(Long id){
         service.open(id);
@@ -90,6 +93,7 @@ public class LightingAreaController {
      * @param id 区域id
      */
     @ApiOperation("关闭区域照明")
+    @ButtonPermission("northAreaLighting:switch")
     @PostMapping("/close")
     public Result<String> close(Long id){
         service.close(id);
@@ -101,6 +105,7 @@ public class LightingAreaController {
      * @param ids 区域id集合（如：ids=1&ids=2 或 ids=1,2,3）
      */
     @ApiOperation("批量开启区域照明")
+    @RequiresPermissions("northAreaLighting:switch")
     @PostMapping("/openBatch")
     public Result<String> openBatch(List<Long> ids){
         service.openBatch(ids);
@@ -112,6 +117,7 @@ public class LightingAreaController {
      * @param ids 区域id集合（如：ids=1&ids=2 或 ids=1,2,3）
      */
     @ApiOperation("批量关闭区域照明")
+    @RequiresPermissions("northAreaLighting:switch")
     @PostMapping("/closeBatch")
     public Result<String> closeBatch(List<Long> ids){
         service.closeBatch(ids);

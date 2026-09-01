@@ -4,6 +4,7 @@ import io.swagger.annotations.Api;
 import io.swagger.annotations.ApiOperation;
 import lombok.AllArgsConstructor;
 import org.jeecg.common.api.vo.Result;
+import org.jeecg.modules.bems.permission.annotation.ButtonPermission;
 import org.jeecg.modules.bems.lighting.entity.LightingArea;
 import org.jeecg.modules.bems.lighting.service.ILightingHomeService;
 import org.jeecg.modules.bems.lighting.vo.AreaStatisticsVo;
@@ -68,6 +69,7 @@ public class LightingHomeController {
      * @param action open-全开、close-全关
      */
     @ApiOperation("一键控制所有灯")
+    @ButtonPermission("northAreaLighting:switch")
     @PostMapping("/controlAll")
     public Result<String> controlAll(@RequestParam String action) {
         if ("open".equals(action)) {

@@ -4,6 +4,7 @@ import com.baomidou.mybatisplus.core.metadata.IPage;
 import io.swagger.annotations.Api;
 import io.swagger.annotations.ApiOperation;
 import lombok.AllArgsConstructor;
+import org.apache.shiro.authz.annotation.RequiresPermissions;
 import org.jeecg.common.api.vo.Result;
 import org.jeecg.modules.bems.lighting.dto.LightingPlanControlDto;
 import org.jeecg.modules.bems.lighting.dto.LightingPlanDetailDto;
@@ -11,6 +12,7 @@ import org.jeecg.modules.bems.lighting.dto.LightingPlanQueryDto;
 import org.jeecg.modules.bems.lighting.entity.LightingPlan;
 import org.jeecg.modules.bems.lighting.entity.LightingPlanExecutionTime;
 import org.jeecg.modules.bems.lighting.service.ILightingPlanService;
+import org.jeecg.modules.bems.permission.annotation.ButtonPermission;
 import org.springframework.web.bind.annotation.*;
 
 import javax.servlet.http.HttpServletResponse;
@@ -48,6 +50,7 @@ public class LightingPlanController {
      * 新增计划
      */
     @ApiOperation("新增计划")
+    @ButtonPermission("northAreaLighting:switch")
     @PostMapping("/add")
     public Result<String> add(@RequestBody LightingPlan plan){
         service.add(plan);
@@ -58,6 +61,7 @@ public class LightingPlanController {
      * 编辑计划
      */
     @ApiOperation("编辑计划")
+    @ButtonPermission("northAreaLighting:switch")
     @PostMapping("/edit")
     public Result<String> edit(@RequestBody LightingPlan plan){
         service.edit(plan);
@@ -68,6 +72,7 @@ public class LightingPlanController {
      * 删除计划
      */
     @ApiOperation("删除计划")
+    @ButtonPermission("northAreaLighting:switch")
     @DeleteMapping("/delete")
     public Result<String> delete(@RequestParam Long id){
         service.delete(id);
@@ -78,6 +83,7 @@ public class LightingPlanController {
      * 启用计划
      */
     @ApiOperation("启用计划")
+    @RequiresPermissions("northAreaLighting:switch")
     @PostMapping("/enable")
     public Result<String> enable(@RequestBody LightingPlanExecutionTime data){
         service.enable(data);
@@ -88,6 +94,7 @@ public class LightingPlanController {
      * 停用计划
      */
     @ApiOperation("停用计划")
+    @RequiresPermissions("northAreaLighting:switch")
     @PostMapping("/disable")
     public Result<String> disable(@RequestParam Long id){
         service.disable(id);
@@ -107,6 +114,7 @@ public class LightingPlanController {
      * 立即执行计划
      */
     @ApiOperation("立即执行计划")
+    @RequiresPermissions("northAreaLighting:switch")
     @PostMapping("/executeNow")
     public Result<String> executeNow(@RequestParam Long id){
         service.executionNow(id);
@@ -120,6 +128,7 @@ public class LightingPlanController {
      * sceneId 可选：传了则只同步该场景，不传自动反查包含这些目标的场景。
      */
     @ApiOperation("批量控制灯光（全开/全关）")
+    @RequiresPermissions("northAreaLighting:switch")
     @PostMapping("/control")
     public Result<String> control(@RequestBody LightingPlanControlDto dto){
         service.control(dto.getRelType(), dto.getRelIds(), dto.getOperationType(), dto.getSceneId(), dto.getProgramSceneIds());
