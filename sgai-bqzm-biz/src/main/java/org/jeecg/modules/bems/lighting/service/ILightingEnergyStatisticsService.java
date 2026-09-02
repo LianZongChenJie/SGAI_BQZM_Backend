@@ -1,6 +1,7 @@
 package org.jeecg.modules.bems.lighting.service;
 
 import org.jeecg.modules.bems.lighting.vo.EnergyMeterReadVo;
+import org.jeecg.modules.bems.lighting.vo.EnergyOverviewVo;
 import org.jeecg.modules.bems.lighting.vo.EnergyProportionVo;
 import org.jeecg.modules.bems.lighting.vo.EnergyRankItemVo;
 import org.jeecg.modules.bems.lighting.vo.EnergySummaryItemVo;
@@ -27,6 +28,14 @@ public interface ILightingEnergyStatisticsService {
      * 占比（Top5 + 其他）
      */
     List<EnergyProportionVo> proportion(String level, String date);
+
+    /**
+     * 今日能耗总览（能耗排名 Top15 + 能耗占比 Top5/其他）
+     * 统一按箱子统计今日累计用电量
+     *
+     * @param date 日期（yyyy-MM-dd 或 yyyyMMdd），空默认今天
+     */
+    EnergyOverviewVo todayOverview(String date);
 
     /**
      * 逐时趋势（按地块时为 Top5 对比，其他级别为全园单序列）

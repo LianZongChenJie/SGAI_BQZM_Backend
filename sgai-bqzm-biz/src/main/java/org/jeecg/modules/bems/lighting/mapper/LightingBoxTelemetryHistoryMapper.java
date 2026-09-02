@@ -38,6 +38,22 @@ public interface LightingBoxTelemetryHistoryMapper extends BaseMapper<LightingBo
                                                           @Param("time") LocalDateTime time);
 
     /**
+     * 批量查询一批网关在指定时间之前各自最近的一条累计表底（用于批量算今日累计端点，避免逐网关 N+1）
+     * 利用 (gateway_code, collect_time) 联合索引
+     */
+    @Select("<script>" +
+            "SELECT t.gateway_code, t.total_energy, t.collect_time FROM lighting_box_telemetry_history t " +
+            "WHERE t.collect_time &lt; #{time} " +
+            "AND t.gateway_code IN <foreach collection='gateways' item='gw' open='(' separator=',' close=')'>#{gw}</foreach> " +
+            "AND t.total_energy IS NOT NULL " +
+            "AND t.collect_time = (SELECT MAX(t2.collect_time) FROM lighting_box_telemetry_history t2 " +
+            "                       WHERE t2.gateway_code = t.gateway_code AND t2.collect_time &lt; #{time} " +
+            "                       AND t2.total_energy IS NOT NULL)" +
+            "</script>")
+    List<LightingBoxTelemetryHistory> selectLastBeforeByGateways(@Param("gateways") List<String> gateways,
+                                                                 @Param("time") LocalDateTime time);
+
+    /**
      * 查询时间窗口内最早的一条箱子遥测（按网关，无更早基准时近似用）
      */
     @Select("SELECT TOP 1 * FROM lighting_box_telemetry_history " +

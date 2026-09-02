@@ -22,6 +22,7 @@ import org.jeecg.modules.bems.permission.entity.RoleDataPermission;
 import org.jeecg.modules.bems.permission.service.RoleDataPermissionService;
 import org.jeecg.modules.bems.permission.vo.UserDataScope;
 import org.jeecg.modules.bems.lighting.vo.EnergyMeterReadVo;
+import org.jeecg.modules.bems.lighting.vo.EnergyOverviewVo;
 import org.jeecg.modules.bems.lighting.vo.EnergyProportionVo;
 import org.jeecg.modules.bems.lighting.vo.EnergyRankItemVo;
 import org.jeecg.modules.bems.lighting.vo.EnergySummaryItemVo;
@@ -107,6 +108,218 @@ public class LightingEnergyStatisticsServiceImpl implements ILightingEnergyStati
             out.add(vo);
         }
         return out;
+    }
+
+    /**
+     * 今日能耗总览：能耗排名 Top15 + 能耗占比 Top5/其他（统一按箱子）
+     * 数据源：与 meterReads 一致，使用箱子表 + 箱子遥测历史表(lighting_box_telemetry_history)
+     * 今日累计用电量 = 当天结束表底 - 当天开始表底
+     *
+     * @param date 日期（yyyy-MM-dd 或 yyyyMMdd），空默认今天
+     */
+    @Override
+    public EnergyOverviewVo todayOverview(String date) {
+        EnergyOverviewVo vo = new EnergyOverviewVo();
+        LocalDate day = parseDate(date);
+        LocalDateTime start = day.atStartOfDay();
+        LocalDateTime end = day.plusDays(1).atStartOfDay();
+
+        // 1. 查所有箱子（今日累计用电量按箱子统计）
+        List<LightingBoxTelemetry> boxes = boxMapper.selectList(new LambdaQueryWrapper<LightingBoxTelemetry>());
+        if (CollectionUtil.isEmpty(boxes)) {
+            vo.setRanking(new ArrayList<>());
+            vo.setProportion(new ArrayList<>());
+            return vo;
+        }
+
+        // 2. 批量查"今日两个端点"的表底（今日0点基准 + 今日末表底），不查中间明细
+        //    参考区间查询(meterReads)，但批量传入全部网关号一次查端点
+        List<String> allGateways = boxes.stream().map(LightingBoxTelemetry::getGatewayCode)
+                .filter(java.util.Objects::nonNull).distinct().collect(Collectors.toList());
+        Map<String, BigDecimal> baseEnergyMap = new HashMap<>(); // 网关 -> 今日0点前最近表底（0点基准）
+        Map<String, BigDecimal> endEnergyMap = new HashMap<>();  // 网关 -> 今日末表底（结束表底）
+        if (!allGateways.isEmpty()) {
+            // 批量查"今日末表底"（end 前最近一条）
+            List<LightingBoxTelemetryHistory> endRows = boxHistoryMapper.selectLastBeforeByGateways(allGateways, end);
+            if (endRows != null) {
+                for (LightingBoxTelemetryHistory r : endRows) {
+                    if (r.getGatewayCode() != null && r.getTotalEnergy() != null) {
+                        endEnergyMap.put(r.getGatewayCode(), BigDecimal.valueOf(r.getTotalEnergy()));
+                    }
+                }
+            }
+            // 批量查"今日0点基准"（start 前最近一条）
+            List<LightingBoxTelemetryHistory> baseRows = boxHistoryMapper.selectLastBeforeByGateways(allGateways, start);
+            if (baseRows != null) {
+                for (LightingBoxTelemetryHistory r : baseRows) {
+                    if (r.getGatewayCode() != null && r.getTotalEnergy() != null) {
+                        baseEnergyMap.put(r.getGatewayCode(), BigDecimal.valueOf(r.getTotalEnergy()));
+                    }
+                }
+            }
+        }
+
+        // 2.3 循环箱子组装排名（基于批量端点查询结果）
+        List<EnergyRankItemVo> rankingList = new ArrayList<>();
+        // 记录区域名 -> 网关号（用于逐时趋势按箱子匹配历史明细）
+        Map<String, String> areaNameToGateway = new HashMap<>();
+        for (LightingBoxTelemetry box : boxes) {
+            if (box.getGatewayCode() == null || box.getGatewayCode().isEmpty()) {
+                continue;
+            }
+            BigDecimal startVal = baseEnergyMap.getOrDefault(box.getGatewayCode(), BigDecimal.ZERO);
+            BigDecimal endVal = endEnergyMap.getOrDefault(box.getGatewayCode(), startVal);
+            BigDecimal today = endVal.subtract(startVal);
+            if (today.signum() < 0) {
+                today = BigDecimal.ZERO;
+            }
+            EnergyRankItemVo item = new EnergyRankItemVo();
+            item.setName(box.getAreaName());
+            item.setMeters(1);
+            item.setKw(box.getActivePower() == null ? BigDecimal.ZERO : BigDecimal.valueOf(box.getActivePower()));
+            item.setToday(today.setScale(1, RoundingMode.HALF_UP));
+            item.setMonth(BigDecimal.ZERO);
+            rankingList.add(item);
+            if (box.getAreaName() != null) {
+                areaNameToGateway.putIfAbsent(box.getAreaName(), box.getGatewayCode());
+            }
+        }
+
+        // 3. 降序排序取 Top15，并算今日占比
+        rankingList.sort((a, b) -> b.getToday().compareTo(a.getToday()));
+        BigDecimal grandToday = rankingList.stream().map(EnergyRankItemVo::getToday).reduce(BigDecimal.ZERO, BigDecimal::add);
+        List<EnergyRankItemVo> top15 = rankingList.stream().limit(15)
+                .map(item -> {
+                    item.setRatio(ratio(item.getToday(), grandToday));
+                    return item;
+                })
+                .collect(Collectors.toList());
+        vo.setRanking(top15);
+
+        // 4. 占比：Top5 + 其他
+        List<EnergyProportionVo> proportionList = new ArrayList<>();
+        int idx = 0;
+        for (EnergyRankItemVo item : rankingList) {
+            if (idx >= 5) {
+                break;
+            }
+            EnergyProportionVo p = new EnergyProportionVo();
+            p.setName(item.getName());
+            p.setValue(item.getToday());
+            p.setRatio(item.getRatio());
+            proportionList.add(p);
+            idx++;
+        }
+        // 其他：Top5 之后所有箱子用电量之和
+        BigDecimal rest = rankingList.stream().skip(5).map(EnergyRankItemVo::getToday)
+                .reduce(BigDecimal.ZERO, BigDecimal::add);
+        if (rest.signum() > 0) {
+            EnergyProportionVo other = new EnergyProportionVo();
+            other.setName("其他");
+            other.setValue(rest.setScale(1, RoundingMode.HALF_UP));
+            other.setRatio(ratio(rest, grandToday));
+            proportionList.add(other);
+        }
+        vo.setProportion(proportionList);
+
+        // 5. 逐时趋势：Top5 箱子今日逐时用电量（先算Top5，再单独查Top5的当天明细）
+        vo.setHourlyTrend(buildTop5HourlyTrend(rankingList, areaNameToGateway, start, end));
+        return vo;
+    }
+
+    /**
+     * 构建 Top5 箱子今日逐时用电量趋势（先算Top5，再查Top5网关当天历史明细）
+     * 每小时用电量 = 该小时最后一条累计表底 - 上一小时最后一条累计表底（无则按 0）
+     *
+     * @param rankingList 今日累计用电量降序列表（含 Top5）
+     * @param areaNameToGateway 区域名 -> 网关号
+     * @param start 当天 0 点
+     * @param end 次日 0 点
+     */
+    private EnergyTrendVo buildTop5HourlyTrend(List<EnergyRankItemVo> rankingList,
+                                               Map<String, String> areaNameToGateway,
+                                               LocalDateTime start, LocalDateTime end) {
+        EnergyTrendVo vo = new EnergyTrendVo();
+        vo.setHours(IntStream.range(0, 24).mapToObj(i -> String.format("%02d:00", i)).collect(Collectors.toList()));
+        vo.setSeries(new ArrayList<>());
+        if (rankingList == null || rankingList.isEmpty()) {
+            return vo;
+        }
+
+        // 取 Top5 的区域名和对应网关号
+        List<String> topNames = new ArrayList<>();
+        List<String> topGateways = new ArrayList<>();
+        for (int i = 0; i < rankingList.size() && i < 5; i++) {
+            String name = rankingList.get(i).getName();
+            topNames.add(name);
+            topGateways.add(areaNameToGateway.get(name));
+        }
+        List<String> validGateways = topGateways.stream().filter(java.util.Objects::nonNull).collect(Collectors.toList());
+        if (validGateways.isEmpty()) {
+            return vo;
+        }
+
+        // 单独查 Top5 网关当天全部历史明细（数据量小：Top5 × 当天）
+        List<LightingBoxTelemetryHistory> rows = boxHistoryMapper.selectList(
+                new LambdaQueryWrapper<LightingBoxTelemetryHistory>()
+                        .in(LightingBoxTelemetryHistory::getGatewayCode, validGateways)
+                        .ge(LightingBoxTelemetryHistory::getCollectTime, start)
+                        .lt(LightingBoxTelemetryHistory::getCollectTime, end)
+                        .isNotNull(LightingBoxTelemetryHistory::getTotalEnergy)
+                        .orderByAsc(LightingBoxTelemetryHistory::getCollectTime));
+
+        // 按小时分组：每小时最后一条累计表底
+        Map<String, BigDecimal[]> hourEndEnergy = new HashMap<>(); // gateway -> [0..23] 每小时末累计表底
+        if (rows != null) {
+            for (LightingBoxTelemetryHistory row : rows) {
+                if (row.getGatewayCode() == null || row.getCollectTime() == null || row.getTotalEnergy() == null) {
+                    continue;
+                }
+                int h = row.getCollectTime().getHours();
+                if (h < 0 || h > 23) {
+                    continue;
+                }
+                BigDecimal[] arr = hourEndEnergy.computeIfAbsent(row.getGatewayCode(), k -> new BigDecimal[24]);
+                // 按时间升序遍历，后到的覆盖 = 每小时最后一条累计表底
+                arr[h] = BigDecimal.valueOf(row.getTotalEnergy());
+            }
+        }
+
+        // 每个 Top5 网关组装 24 点逐时用电量
+        for (int i = 0; i < topNames.size(); i++) {
+            String gateway = topGateways.get(i);
+            if (gateway == null) {
+                continue;
+            }
+            BigDecimal[] endEnergy = hourEndEnergy.get(gateway);
+            if (endEnergy == null) {
+                continue;
+            }
+            BigDecimal[] points = new BigDecimal[24];
+            BigDecimal prev = null; // 上一小时末累计表底
+            for (int h = 0; h < 24; h++) {
+                BigDecimal cur = endEnergy[h];
+                if (cur == null) {
+                    // 该小时无数据：用电量为 0
+                    points[h] = BigDecimal.ZERO;
+                    continue;
+                }
+                if (prev == null) {
+                    // 首条：用当天 0 点前基准做差
+                    LightingBoxTelemetryHistory baseRead = boxHistoryMapper.selectLastBeforeByGateway(gateway, start);
+                    prev = baseRead != null && baseRead.getTotalEnergy() != null
+                            ? BigDecimal.valueOf(baseRead.getTotalEnergy()) : BigDecimal.ZERO;
+                }
+                BigDecimal hourEnergy = cur.subtract(prev);
+                points[h] = hourEnergy.signum() < 0 ? BigDecimal.ZERO : hourEnergy.setScale(1, RoundingMode.HALF_UP);
+                prev = cur;
+            }
+            EnergyTrendVo.Series s = new EnergyTrendVo.Series();
+            s.setName(topNames.get(i));
+            s.setPoints(Arrays.stream(points).collect(Collectors.toList()));
+            vo.getSeries().add(s);
+        }
+        return vo;
     }
 
     @Override

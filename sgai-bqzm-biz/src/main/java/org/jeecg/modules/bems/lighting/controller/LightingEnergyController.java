@@ -8,6 +8,7 @@ import lombok.AllArgsConstructor;
 import org.jeecg.common.api.vo.Result;
 import org.jeecg.modules.bems.lighting.service.ILightingEnergyStatisticsService;
 import org.jeecg.modules.bems.lighting.vo.EnergyMeterReadVo;
+import org.jeecg.modules.bems.lighting.vo.EnergyOverviewVo;
 import org.jeecg.modules.bems.lighting.vo.EnergyProportionVo;
 import org.jeecg.modules.bems.lighting.vo.EnergyRankItemVo;
 import org.jeecg.modules.bems.lighting.vo.EnergySummaryItemVo;
@@ -56,6 +57,18 @@ public class LightingEnergyController {
     public Result<List<EnergyProportionVo>> proportion(@RequestParam(defaultValue = "parcel") String level,
                                                        @RequestParam(required = false) String date) {
         return Result.ok(statisticsService.proportion(level, date));
+    }
+
+    /**
+     * 今日能耗总览（能耗排名 Top15 + 能耗占比 Top5/其他，统一按箱子）
+     */
+    @ApiOperation("今日能耗总览（排名 Top15 + 占比 Top5/其他）")
+    @ApiImplicitParams({
+            @ApiImplicitParam(name = "date", value = "日期（yyyy-MM-dd 或 yyyyMMdd），空默认今天", paramType = "query", dataType = "string")
+    })
+    @GetMapping("/todayOverview")
+    public Result<EnergyOverviewVo> todayOverview(@RequestParam(required = false) String date) {
+        return Result.ok(statisticsService.todayOverview(date));
     }
 
     /**
