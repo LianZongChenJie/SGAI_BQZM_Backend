@@ -88,6 +88,7 @@ public class LightingOperationLogServiceImpl extends ServiceImpl<LightingOperati
         IPage<LightingOperationLog> result = page(new Page<>(params.getPageNo(), params.getPageSize()), new LambdaQueryWrapper<LightingOperationLog>()
                 .eq(StrUtil.isNotEmpty(params.getLogType()), LightingOperationLog::getLogType, params.getLogType())
                 .eq(StrUtil.isNotEmpty(params.getRelType()), LightingOperationLog::getRelType, params.getRelType())
+                .eq(StrUtil.isNotEmpty(params.getOperatorType()), LightingOperationLog::getOperatorType, params.getOperatorType())
                 // 默认只查顶层日志（parentId为null）
                 .isNull(LightingOperationLog::getParentId)
                 // 操作类型模糊匹配：开/关（兼容 区域全开/回路开启/区域全关/回路关闭 等写法）

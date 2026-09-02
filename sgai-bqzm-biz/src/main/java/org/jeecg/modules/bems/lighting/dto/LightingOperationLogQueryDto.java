@@ -30,6 +30,12 @@ public class LightingOperationLogQueryDto {
     private String operationType;
 
     /**
+     * 操作类型：手动、定时、场景
+     */
+    @ApiModelProperty(value = "操作类型：手动、定时、场景")
+    private String operatorType;
+
+    /**
      * 名称（模糊匹配）
      */
     @ApiModelProperty(value = "名称（模糊匹配）")

@@ -12,8 +12,10 @@ import org.jeecg.modules.bems.lighting.entity.LightingArea;
 import org.jeecg.modules.bems.lighting.entity.LightingCircuit;
 import org.jeecg.modules.bems.lighting.entity.LightingDistrict;
 import org.jeecg.modules.bems.lighting.entity.LightingEnergyHour;
+import org.jeecg.modules.bems.lighting.entity.LightingBoxTelemetry;
 import org.jeecg.modules.bems.lighting.entity.LightingBoxTelemetryHistory;
 import org.jeecg.modules.bems.lighting.mapper.LightingBoxTelemetryHistoryMapper;
+import org.jeecg.modules.bems.lighting.mapper.LightingBoxTelemetryMapper;
 import org.jeecg.modules.bems.lighting.service.ILightingAreaService;
 import org.jeecg.modules.bems.lighting.service.ILightingCircuitService;
 import org.jeecg.modules.bems.lighting.service.ILightingDistrictService;
@@ -64,6 +66,7 @@ public class LightingEnergyStatisticsServiceImpl implements ILightingEnergyStati
     private final ILightingAreaService areaService;
     private final ILightingDistrictService districtService;
     private final LightingBoxTelemetryHistoryMapper boxHistoryMapper;
+    private final LightingBoxTelemetryMapper boxMapper;
     private final RoleDataPermissionService roleDataPermissionService;
 
     @Override
@@ -301,7 +304,7 @@ public class LightingEnergyStatisticsServiceImpl implements ILightingEnergyStati
             end = tmp;
         }
 
-        // 数据权限：bqzm 放行；非 bqzm 时 districtId 限定在权限片区集合内
+        // 数据权限：bqzm 放行；非 bqzm 时限定在权限片区集合内
         Set<Long> allowedDistricts = null;
         if (!isBqzmRole()) {
             allowedDistricts = getDistrictPermissionIds();
@@ -311,105 +314,51 @@ public class LightingEnergyStatisticsServiceImpl implements ILightingEnergyStati
             }
         }
 
-        // 1. 片区下区域集合（districtId 为空或 <=0 表示查询全部片区）
-        List<Long> areaIds = new ArrayList<>();
-        Map<Long, LightingArea> areaMap = new HashMap<>();
+        // 1. 先查箱子表（片区/区域/网关号/区域名条件箱子表都有），拿到要统计的箱子（网关）
+        //    片区条件：districtId；非 bqzm 时限定在权限片区
+        LambdaQueryWrapper<LightingBoxTelemetry> boxWrapper = new LambdaQueryWrapper<>();
         if (districtId != null && districtId > 0) {
-            if (allowedDistricts != null && !allowedDistricts.contains(districtId)) {
-                // 非 bqzm 且请求的片区不在权限内：无权限
-                return new ArrayList<>();
-            }
-            List<LightingArea> areas = areaService.list(new LambdaQueryWrapper<LightingArea>()
-                    .eq(LightingArea::getDistrictId, districtId));
-            for (LightingArea a : areas) {
-                areaIds.add(a.getId());
-                areaMap.put(a.getId(), a);
-            }
+            boxWrapper.eq(LightingBoxTelemetry::getDistrictId, districtId);
         } else if (allowedDistricts != null) {
-            // 非 bqzm 查询全部片区：限定在权限片区集合内
-            List<LightingArea> areas = areaService.list(new LambdaQueryWrapper<LightingArea>()
-                    .in(LightingArea::getDistrictId, allowedDistricts));
-            for (LightingArea a : areas) {
-                areaIds.add(a.getId());
-                areaMap.put(a.getId(), a);
-            }
+            boxWrapper.in(LightingBoxTelemetry::getDistrictId, allowedDistricts);
         }
-
-        // 1.1 按区域编号(areaCode)精确过滤：只查该区域下的箱子
+        // 区域编号(areaCode)：先按 area_code 查区域拿 areaId，再按 area_id 过滤箱子
         if (areaCode != null && !areaCode.isEmpty()) {
             List<LightingArea> areas = areaService.list(new LambdaQueryWrapper<LightingArea>()
                     .eq(LightingArea::getAreaCode, areaCode));
-            Set<Long> targetIds = new HashSet<>();
-            for (LightingArea a : areas) {
-                targetIds.add(a.getId());
-                areaMap.put(a.getId(), a);
+            if (CollectionUtil.isEmpty(areas)) {
+                return new ArrayList<>();
             }
-            // 与片区筛选结果取交集；未传片区时直接用该区域
-            if (areaIds.isEmpty()) {
-                areaIds.addAll(targetIds);
-            } else {
-                areaIds.retainAll(targetIds);
-            }
+            Set<Long> areaIds = areas.stream().map(LightingArea::getId)
+                    .filter(Objects::nonNull).collect(Collectors.toSet());
+            boxWrapper.in(LightingBoxTelemetry::getAreaId, areaIds);
         }
-
-        // 2. 确定区间内要统计的网关集合
-        //    - 若指定了网关：只查该网关
-        //    - 否则：查区间内活跃的网关去重集合（按区域过滤，避免加载区间内全部原始记录导致超时）
-        Set<String> gateways;
+        // 网关(区域名/网关号)：按区域名模糊 或 网关号精确匹配箱子
         if (gateway != null && !gateway.isEmpty()) {
-            gateways = new HashSet<>();
-            gateways.add(gateway);
-        } else {
-            List<LightingBoxTelemetryHistory> distinctRows =
-                    boxHistoryMapper.selectDistinctGateways(start, end, areaIds.isEmpty() ? null : areaIds);
-            gateways = new HashSet<>();
-            if (distinctRows != null) {
-                for (LightingBoxTelemetryHistory row : distinctRows) {
-                    if (row.getGatewayCode() != null) {
-                        gateways.add(row.getGatewayCode());
-                    }
-                }
-            }
+            boxWrapper.and(w -> w.like(LightingBoxTelemetry::getAreaName, gateway)
+                               .or().eq(LightingBoxTelemetry::getGatewayCode, gateway));
         }
-        if (gateways.isEmpty()) {
+        List<LightingBoxTelemetry> boxes = boxMapper.selectList(boxWrapper);
+        if (CollectionUtil.isEmpty(boxes)) {
             return new ArrayList<>();
         }
 
-        // 3. 一次性构建"网关号 -> 区域"映射（避免循环内逐网关反查，防止 N+1）
-        Map<String, LightingArea> gatewayAreaMap = new HashMap<>();
-        List<LightingArea> allAreas = areaService.list(new LambdaQueryWrapper<LightingArea>()
-                .isNotNull(LightingArea::getAreaCode));
-        if (allAreas != null) {
-            for (LightingArea a : allAreas) {
-                String code = a.getAreaCode();
-                if (code == null || code.isEmpty()) {
-                    continue;
-                }
-                int dot = code.lastIndexOf('.');
-                String tail = dot >= 0 ? code.substring(dot + 1).trim() : code.trim();
-                if (!tail.isEmpty()) {
-                    gatewayAreaMap.putIfAbsent(tail, a);
-                }
-            }
-        }
-
+        // 2. 用箱子(网关号)去匹配历史表，计算开始/结束表底与累计用电量
         List<EnergyMeterReadVo> result = new ArrayList<>();
-        for (String gw : gateways) {
-            EnergyMeterReadVo vo = new EnergyMeterReadVo();
-            vo.setGatewayCode(gw);
-
-            // 区域信息（通过网关号查映射；命中后展示区域名/片区名）
-            LightingArea area = gatewayAreaMap.get(gw);
-            if (area != null) {
-                vo.setBoxName(area.getAreaName());
-                vo.setAreaName(area.getAreaName());
-                vo.setDistrictName(resolveDistrictName(area.getDistrictId()));
+        for (LightingBoxTelemetry box : boxes) {
+            if (box.getGatewayCode() == null || box.getGatewayCode().isEmpty()) {
+                continue;
             }
+            EnergyMeterReadVo vo = new EnergyMeterReadVo();
+            vo.setGatewayCode(box.getGatewayCode());
+            vo.setBoxName(box.getAreaName());
+            vo.setAreaName(box.getAreaName());
+            vo.setDistrictName(resolveDistrictName(box.getDistrictId()));
 
             // 开始表底：开始时间前最近一条累计电量
-            LightingBoxTelemetryHistory startRead = boxHistoryMapper.selectLastBeforeByGateway(gw, start);
+            LightingBoxTelemetryHistory startRead = boxHistoryMapper.selectLastBeforeByGateway(box.getGatewayCode(), start);
             // 结束表底：结束时间前最近一条累计电量
-            LightingBoxTelemetryHistory endRead = boxHistoryMapper.selectLastBeforeByGateway(gw, end);
+            LightingBoxTelemetryHistory endRead = boxHistoryMapper.selectLastBeforeByGateway(box.getGatewayCode(), end);
 
             if (startRead != null) {
                 vo.setStartTime(toLocalDateTime(startRead.getCollectTime()));
