@@ -329,48 +329,31 @@ public class LightingEnergyStatisticsServiceImpl implements ILightingEnergyStati
         String lv = normalizeLevel(level);
         EnergyTrendVo vo = new EnergyTrendVo();
         vo.setHours(IntStream.range(0, 24).mapToObj(i -> String.format("%02d:00", i)).collect(Collectors.toList()));
+        vo.setSeries(new ArrayList<>());
         List<LightingEnergyHour> rows = energyHourService.list(new LambdaQueryWrapper<LightingEnergyHour>()
                 .eq(LightingEnergyHour::getStatDate, dayStr));
-        vo.setSeries(new ArrayList<>());
         if (rows.isEmpty()) {
             return vo;
         }
         Ctx ctx = buildCtx(rows);
-        if (LEVEL_PARCEL.equals(lv)) {
-            // 按地块：今日 Top5 地块逐时对比
-            List<EnergyAgg> aggs = filterByPermission(aggregate(LEVEL_PARCEL, day, ctx, rows));
-            aggs.sort((a, b) -> b.getToday().compareTo(a.getToday()));
-            for (EnergyAgg agg : aggs.stream().limit(5).collect(Collectors.toList())) {
-                BigDecimal[] points = new BigDecimal[24];
-                Arrays.fill(points, BigDecimal.ZERO);
-                for (LightingEnergyHour row : rows) {
-                    if (row.getStatHour() == null || row.getStatHour() < 0 || row.getStatHour() > 23) {
-                        continue;
-                    }
-                    if (!belongsToParcel(row, agg, ctx)) {
-                        continue;
-                    }
-                    points[row.getStatHour()] = points[row.getStatHour()]
-                            .add(row.getEnergy() == null ? BigDecimal.ZERO : row.getEnergy());
-                }
-                EnergyTrendVo.Series s = new EnergyTrendVo.Series();
-                s.setName(agg.getName());
-                s.setPoints(Arrays.stream(points).map(p -> p.setScale(1, RoundingMode.HALF_UP)).collect(Collectors.toList()));
-                vo.getSeries().add(s);
-            }
-        } else {
-            // 其他级别：全园单序列
+        // 今日 Top5 该级别聚合对象逐时对比（parcel-地块、zone-区域、box-箱子）
+        List<EnergyAgg> aggs = filterByPermission(aggregate(lv, day, ctx, rows));
+        aggs.sort((a, b) -> b.getToday().compareTo(a.getToday()));
+        for (EnergyAgg agg : aggs.stream().limit(5).collect(Collectors.toList())) {
             BigDecimal[] points = new BigDecimal[24];
             Arrays.fill(points, BigDecimal.ZERO);
             for (LightingEnergyHour row : rows) {
                 if (row.getStatHour() == null || row.getStatHour() < 0 || row.getStatHour() > 23) {
                     continue;
                 }
+                if (!belongsToLevel(row, agg, lv, ctx)) {
+                    continue;
+                }
                 points[row.getStatHour()] = points[row.getStatHour()]
                         .add(row.getEnergy() == null ? BigDecimal.ZERO : row.getEnergy());
             }
             EnergyTrendVo.Series s = new EnergyTrendVo.Series();
-            s.setName("全园");
+            s.setName(agg.getName());
             s.setPoints(Arrays.stream(points).map(p -> p.setScale(1, RoundingMode.HALF_UP)).collect(Collectors.toList()));
             vo.getSeries().add(s);
         }
@@ -901,14 +884,29 @@ public class LightingEnergyStatisticsServiceImpl implements ILightingEnergyStati
         return kw;
     }
 
-    private boolean belongsToParcel(LightingEnergyHour row, EnergyAgg agg, Ctx ctx) {
+    /**
+     * 判断某条小时能耗记录是否属于指定级别的聚合对象（用于逐时趋势序列拆分）
+     * - parcel：按地块（区域反查片区）
+     * - zone：按区域（area_id 精确匹配）
+     * - box：按箱子（区域 + 网关）
+     */
+    private boolean belongsToLevel(LightingEnergyHour row, EnergyAgg agg, String level, Ctx ctx) {
         Long areaId = row.getAreaId();
+        String gateway = row.getGatewayCode();
         if (agg.isUnassigned()) {
             return areaId == null;
         }
         if (areaId == null) {
             return false;
         }
+        if (LEVEL_ZONE.equals(level)) {
+            return areaId.equals(agg.getAreaId());
+        }
+        if (LEVEL_BOX.equals(level)) {
+            return areaId.equals(agg.getAreaId())
+                    && Objects.equals(gateway, agg.getGateway());
+        }
+        // parcel：区域反查片区
         LightingArea area = ctx.areaMap.get(areaId);
         Long districtId = area == null ? null : area.getDistrictId();
         return districtId != null && districtId.equals(agg.getDistrictId());

@@ -38,7 +38,8 @@ public interface ILightingEnergyStatisticsService {
     EnergyOverviewVo todayOverview(String date);
 
     /**
-     * 逐时趋势（按地块时为 Top5 对比，其他级别为全园单序列）
+     * 逐时趋势（今日 Top5 该级别聚合对象逐时对比）
+     * level 支持 parcel-地块、zone-区域、box-箱子，均按对应级别取今日用电量 Top5 拆序列
      */
     EnergyTrendVo hourlyTrend(String level, String date);
 

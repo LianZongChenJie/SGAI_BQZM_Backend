@@ -72,9 +72,13 @@ public class LightingEnergyController {
     }
 
     /**
-     * 逐时趋势（按地块时为 Top5 对比，其他级别为全园单序列）
+     * 逐时趋势（今日 Top5 该级别聚合对象逐时对比；level：parcel-地块、zone-区域、box-箱子）
      */
-    @ApiOperation("Top5 逐时趋势对比（kW）")
+    @ApiOperation("Top5 逐时趋势对比（kW，level 支持地块/区域/箱子）")
+    @ApiImplicitParams({
+            @ApiImplicitParam(name = "level", value = "统计级别：parcel-按地块、zone-按区域、box-按箱子", defaultValue = "parcel", paramType = "query", dataType = "string"),
+            @ApiImplicitParam(name = "date", value = "日期（yyyy-MM-dd 或 yyyyMMdd），空默认今天", paramType = "query", dataType = "string")
+    })
     @GetMapping("/hourlyTrend")
     public Result<EnergyTrendVo> hourlyTrend(@RequestParam(defaultValue = "parcel") String level,
                                              @RequestParam(required = false) String date) {
