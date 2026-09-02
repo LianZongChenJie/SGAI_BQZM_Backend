@@ -71,7 +71,7 @@ public class LightingBoxTelemetry implements Serializable {
     private Double activePower;
     @ApiModelProperty(value = "无功功率(kVar)")
     private Double reactivePower;
-    @ApiModelProperty(value = "现在(视在)功率(kVA)")
+    @ApiModelProperty(value = "视在功率(kVA)")
     private Double apparentPower;
     @ApiModelProperty(value = "功率因数")
     private Double powerFactor;

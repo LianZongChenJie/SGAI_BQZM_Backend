@@ -13,11 +13,13 @@ import org.apache.poi.ss.usermodel.Workbook;
 import org.apache.shiro.SecurityUtils;
 import org.jeecg.common.exception.JeecgBootException;
 import org.jeecg.common.system.vo.LoginUser;
+import org.jeecg.modules.bems.constant.BusinessConfigConstant;
 import org.jeecg.modules.bems.lighting.dto.LightingPlanExportDto;
 import org.jeecg.modules.bems.lighting.dto.LightingSceneDetailDto;
 import org.jeecg.modules.bems.lighting.dto.LightingSceneDto;
 import org.jeecg.modules.bems.lighting.dto.LightingSceneQueryDto;
 import org.jeecg.modules.bems.lighting.dto.LightingSpaceScenesVo;
+import org.jeecg.modules.bems.lighting.service.*;
 import org.jeecgframework.poi.excel.ExcelExportUtil;
 import org.jeecgframework.poi.excel.entity.ExportParams;
 import org.jeecgframework.poi.excel.entity.enmus.ExcelType;
@@ -31,12 +33,6 @@ import org.jeecg.modules.bems.lighting.entity.LightingSceneDetail;
 import org.jeecg.modules.bems.lighting.mapper.LightingSceneDetailMapper;
 import org.jeecg.modules.bems.lighting.mapper.LightingSceneMapper;
 import org.jeecg.modules.bems.lighting.mq.send.LightingSendService;
-import org.jeecg.modules.bems.lighting.service.ILightingAreaService;
-import org.jeecg.modules.bems.lighting.service.ILightingCircuitService;
-import org.jeecg.modules.bems.lighting.service.ILightingOperationLogService;
-import org.jeecg.modules.bems.lighting.service.ILightingProgramService;
-import org.jeecg.modules.bems.lighting.service.ILightingSceneService;
-import org.jeecg.modules.bems.lighting.service.YelIotService;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -81,6 +77,7 @@ public class LightingSceneServiceImpl extends ServiceImpl<LightingSceneMapper, L
     private final YelIotService yelIotService;
 
     private final ILightingProgramService lightingProgramService;
+    private final IBusinessConfigService businessConfigService;
 
     @Override
     public IPage<LightingPlan> listPage(LightingSceneQueryDto params) {
@@ -129,7 +126,9 @@ public class LightingSceneServiceImpl extends ServiceImpl<LightingSceneMapper, L
                 return false;
             }
             for (String roleCode : sysUser.getRoleCode().split(",")) {
-                if (StringUtils.trim(roleCode).equals("bqzm")) {
+                String roleBqzm = BusinessConfigConstant.ROLE_BQZM;
+                String valueByKey1 = businessConfigService.getValueByKey(roleBqzm);
+                if (valueByKey1.equals(roleCode.trim())) {
                     return true;
                 }
             }

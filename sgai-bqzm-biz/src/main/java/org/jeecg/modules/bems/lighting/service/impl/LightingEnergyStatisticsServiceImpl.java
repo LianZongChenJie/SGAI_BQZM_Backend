@@ -8,6 +8,7 @@ import lombok.extern.slf4j.Slf4j;
 import org.apache.commons.lang3.StringUtils;
 import org.apache.shiro.SecurityUtils;
 import org.jeecg.common.system.vo.LoginUser;
+import org.jeecg.modules.bems.constant.BusinessConfigConstant;
 import org.jeecg.modules.bems.lighting.entity.LightingArea;
 import org.jeecg.modules.bems.lighting.entity.LightingCircuit;
 import org.jeecg.modules.bems.lighting.entity.LightingDistrict;
@@ -16,11 +17,7 @@ import org.jeecg.modules.bems.lighting.entity.LightingBoxTelemetry;
 import org.jeecg.modules.bems.lighting.entity.LightingBoxTelemetryHistory;
 import org.jeecg.modules.bems.lighting.mapper.LightingBoxTelemetryHistoryMapper;
 import org.jeecg.modules.bems.lighting.mapper.LightingBoxTelemetryMapper;
-import org.jeecg.modules.bems.lighting.service.ILightingAreaService;
-import org.jeecg.modules.bems.lighting.service.ILightingCircuitService;
-import org.jeecg.modules.bems.lighting.service.ILightingDistrictService;
-import org.jeecg.modules.bems.lighting.service.ILightingEnergyHourService;
-import org.jeecg.modules.bems.lighting.service.ILightingEnergyStatisticsService;
+import org.jeecg.modules.bems.lighting.service.*;
 import org.jeecg.modules.bems.permission.entity.RoleDataPermission;
 import org.jeecg.modules.bems.permission.service.RoleDataPermissionService;
 import org.jeecg.modules.bems.permission.vo.UserDataScope;
@@ -68,6 +65,7 @@ public class LightingEnergyStatisticsServiceImpl implements ILightingEnergyStati
     private final LightingBoxTelemetryHistoryMapper boxHistoryMapper;
     private final LightingBoxTelemetryMapper boxMapper;
     private final RoleDataPermissionService roleDataPermissionService;
+    private final IBusinessConfigService businessConfigService;
 
     @Override
     public List<EnergyRankItemVo> ranking(String level, String date, Integer top) {
@@ -462,7 +460,9 @@ public class LightingEnergyStatisticsServiceImpl implements ILightingEnergyStati
                 return false;
             }
             for (String roleCode : sysUser.getRoleCode().split(",")) {
-                if (StringUtils.trim(roleCode).equals("bqzm")) {
+                String roleBqzm = BusinessConfigConstant.ROLE_BQZM;
+                String valueByKey1 = businessConfigService.getValueByKey(roleBqzm);
+                if (valueByKey1.equals(roleCode.trim())) {
                     return true;
                 }
             }
