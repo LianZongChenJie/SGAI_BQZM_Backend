@@ -6,9 +6,6 @@ import lombok.AllArgsConstructor;
 import lombok.Data;
 import lombok.extern.slf4j.Slf4j;
 import org.apache.commons.lang3.StringUtils;
-import org.apache.shiro.SecurityUtils;
-import org.jeecg.common.system.vo.LoginUser;
-import org.jeecg.modules.bems.constant.BusinessConfigConstant;
 import org.jeecg.modules.bems.lighting.entity.LightingArea;
 import org.jeecg.modules.bems.lighting.entity.LightingCircuit;
 import org.jeecg.modules.bems.lighting.entity.LightingDistrict;
@@ -66,7 +63,6 @@ public class LightingEnergyStatisticsServiceImpl implements ILightingEnergyStati
     private final LightingBoxTelemetryHistoryMapper boxHistoryMapper;
     private final LightingBoxTelemetryMapper boxMapper;
     private final RoleDataPermissionService roleDataPermissionService;
-    private final IBusinessConfigService businessConfigService;
 
     @Override
     public List<EnergyRankItemVo> ranking(String level, String date, Integer top) {
@@ -498,18 +494,16 @@ public class LightingEnergyStatisticsServiceImpl implements ILightingEnergyStati
             end = tmp;
         }
 
-        // 数据权限：bqzm 放行；非 bqzm 时限定在权限片区集合内
+        // 数据权限：仅做片区(DISTRICT)控制
+        // 未配置片区权限的角色不限制（查全部）；已配置片区权限则限定在权限片区集合内
         Set<Long> allowedDistricts = null;
-        if (!isBqzmRole()) {
-            allowedDistricts = getDistrictPermissionIds();
-            if (CollectionUtil.isEmpty(allowedDistricts)) {
-                // 非 bqzm 且未配置任何片区权限：无可访问数据
-                return new ArrayList<>();
-            }
+        Set<Long> ids = getDistrictPermissionIds();
+        if (CollectionUtil.isNotEmpty(ids)) {
+            allowedDistricts = ids;
         }
 
         // 1. 先查箱子表（片区/区域/网关号/区域名条件箱子表都有），拿到要统计的箱子（网关）
-        //    片区条件：districtId；非 bqzm 时限定在权限片区
+        //    片区条件：districtId；未显式指定时已配置权限则限定在权限片区
         LambdaQueryWrapper<LightingBoxTelemetry> boxWrapper = new LambdaQueryWrapper<>();
         if (districtId != null && districtId > 0) {
             boxWrapper.eq(LightingBoxTelemetry::getDistrictId, districtId);
@@ -647,42 +641,19 @@ public class LightingEnergyStatisticsServiceImpl implements ILightingEnergyStati
     // ==================== 内部实现 ====================
 
     /**
-     * 判断当前登录用户是否拥有 bqzm 角色（与综合预览角色判断保持一致）
-     */
-    private boolean isBqzmRole() {
-        try {
-            LoginUser sysUser = (LoginUser) SecurityUtils.getSubject().getPrincipal();
-            if (sysUser == null || StringUtils.isEmpty(sysUser.getRoleCode())) {
-                return false;
-            }
-            for (String roleCode : sysUser.getRoleCode().split(",")) {
-                String roleBqzm = BusinessConfigConstant.ROLE_BQZM;
-                String valueByKey1 = businessConfigService.getValueByKey(roleBqzm);
-                if (valueByKey1.equals(roleCode.trim())) {
-                    return true;
-                }
-            }
-        } catch (Exception e) {
-            log.warn("【能耗统计】判断 bqzm 角色失败，按非 bqzm 处理", e);
-        }
-        return false;
-    }
-
-    /**
-     * 数据权限过滤：bqzm 角色返回全部；其他角色仅保留其有权限片区下的数据
-     * 权限片区集合从 role_data_permission 配置表读取（DISTRICT 类型）
-     * - parcel(地块)级别：直接按聚合结果的 districtId 判断
-     * - zone/box(区域/箱子)级别：通过区域反查所属片区判断
-     * - 未关联区域（待确认映射）的数据，非 bqzm 角色一律不展示
+     * 数据权限过滤：仅做片区(DISTRICT)数据权限控制
+     * - 未配置任何片区权限的角色：不限制，返回全部
+     * - 已配置片区权限的角色：仅保留其有权限片区下的数据
+     *   权限片区集合从 role_data_permission 配置表读取（DISTRICT 类型）
+     *   - parcel(地块)级别：直接按聚合结果的 districtId 判断
+     *   - zone/box(区域/箱子)级别：通过区域反查所属片区判断
+     *   - 未关联区域（待确认映射）的数据一律不展示
      */
     private List<EnergyAgg> filterByPermission(List<EnergyAgg> aggs) {
-        if (isBqzmRole()) {
-            return aggs;
-        }
         Set<Long> allowedDistricts = getDistrictPermissionIds();
         if (CollectionUtil.isEmpty(allowedDistricts)) {
-            // 非 bqzm 且未配置任何片区权限：不展示任何能耗数据
-            return new ArrayList<>();
+            // 未配置任何片区权限：不限制，查看全部
+            return aggs;
         }
         if (aggs == null || aggs.isEmpty()) {
             return aggs;
