@@ -1,6 +1,7 @@
 package org.jeecg.modules.bems.lighting.service.impl;
 
 import cn.hutool.core.date.LocalDateTimeUtil;
+import com.alibaba.cloud.commons.lang.StringUtils;
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.baomidou.mybatisplus.core.conditions.update.LambdaUpdateWrapper;
 import com.baomidou.mybatisplus.core.metadata.IPage;
@@ -281,6 +282,12 @@ public class LightingCircuitServiceImpl extends ServiceImpl<CircuitMapper, Light
             return;
         }
 
+        // 四高炉（space=901）走电箱控制小程序通道，回路编码作为 operRd 发送
+        if("901".equals(area.getSpace())){
+            controlSgf(data, area, type, parentId);
+            return;
+        }
+
         if(type){
             service.circuitOpen(area.getSpace(),area.getAreaCode(),data.getCircuitCode());
             lightingOperationLogService.saveLog(LightingOperationLog.LOG_TYPE_CIRCUIT, parentId, LightingOperationLog.REL_TYPE_CIRCUIT, id, area.getAreaName() + "-" + data.getCircuitName(), LocalDateTime.now(), "回路开启");
@@ -361,6 +368,37 @@ public class LightingCircuitServiceImpl extends ServiceImpl<CircuitMapper, Light
                 circuit.getCircuitName(), operName, circuitCode);
 
         sendService.send904Control(area.getAreaCode(), circuitCode, value);
+
+        lightingOperationLogService.saveLog(LightingOperationLog.LOG_TYPE_CIRCUIT, parentId,
+                LightingOperationLog.REL_TYPE_CIRCUIT, circuit.getId(),
+                area.getAreaName() + "-" + circuit.getCircuitName(),
+                LocalDateTime.now(), operName);
+
+        // 乐观更新操作人/操作时间及开关时间
+        updateControlInfo(circuit, type);
+    }
+
+    /**
+     * 四高炉（space=901）回路控制（走电箱控制小程序通道）
+     * 区域即电箱，area_code 即 deviceSn；把本回路编码 circuit_code 作为 operRd 发送，与 902/903 逻辑一致
+     */
+    private void controlSgf(LightingCircuit circuit, LightingArea area, boolean type, Long parentId){
+        String circuitCode = circuit.getCircuitCode();
+        if(circuitCode == null || circuitCode.isEmpty()){
+            throw new JeecgBootException("回路编码为空，无法控制");
+        }
+        String areaCode = area.getAreaCode();
+        if(StringUtils.isEmpty(areaCode)){
+            throw new JeecgBootException("区域编码为空，无法控制");
+        }
+
+        String oper = type ? "1" : "0";
+        String operName = type ? "回路开启" : "回路关闭";
+
+        log.info("【四高炉】回路控制：circuitName={}, 操作={}, deviceSn={}, circuitCode={}",
+                circuit.getCircuitName(), operName, areaCode, circuitCode);
+
+        sendService.sendSgfControl(areaCode, circuitCode, oper);
 
         lightingOperationLogService.saveLog(LightingOperationLog.LOG_TYPE_CIRCUIT, parentId,
                 LightingOperationLog.REL_TYPE_CIRCUIT, circuit.getId(),

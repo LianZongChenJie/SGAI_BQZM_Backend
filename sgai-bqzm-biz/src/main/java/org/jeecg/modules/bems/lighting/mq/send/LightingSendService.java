@@ -8,7 +8,6 @@ import lombok.AllArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.apache.commons.lang3.StringUtils;
 import org.jeecg.common.util.RedisUtil;
-import org.jeecg.modules.bems.lighting.entity.LightingPlanExecuteLog;
 import org.jeecg.modules.bems.lighting.mq.constant.LightingMqConstant;
 import org.jeecg.modules.bems.lighting.mq.message.LightInfoUpdateLoad;
 import org.jeecg.modules.bems.lighting.service.ILightingPlanExecuteLogService;
@@ -22,11 +21,7 @@ import org.springframework.stereotype.Service;
 import java.time.LocalDateTime;
 import java.time.format.DateTimeFormatter;
 import java.time.temporal.ChronoUnit;
-import java.util.ArrayList;
-import java.util.HashMap;
-import java.util.List;
-import java.util.Map;
-import java.util.Set;
+import java.util.*;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.function.Predicate;
@@ -162,15 +157,16 @@ public class LightingSendService {
      * 发送四高炉电箱控制消息（到电箱控制小程序）
      * 四高炉区域（space=901）的 area_code 即电箱设备编号 deviceSn，如 yel_power_sg06
      * @param deviceSn 电箱设备编号（= lighting_area.area_code）
-     * @param onOff 操作：1=开，0=关
+     * @param oper 操作：1=开，0=关
      */
-    public void sendSgfControl(String deviceSn, String onOff) {
+    public void sendSgfControl(String deviceSn, String operRd, String oper) {
         Map<String, Object> msg = new HashMap<>();
         msg.put("deviceSn", deviceSn);
-        msg.put("onOff", onOff);
+        msg.put("operRd", operRd);
+        msg.put("oper", oper);
         MessageProperties properties = new MessageProperties();
         properties.setContentType(MessageProperties.CONTENT_TYPE_JSON);
-        log.info("【四高炉】发送电箱控制消息：deviceSn={}, onOff={}", deviceSn, onOff);
+        log.info("【四高炉】发送电箱控制消息：deviceSn={}, operRd={}, oper={}", deviceSn, operRd, oper);
         rabbitTemplate.send("", LightingMqConstant.QUEUE_ELECTRIC_BOX_OPERATION, new Message(JSONObject.toJSONString(msg).getBytes(), properties));
     }
 

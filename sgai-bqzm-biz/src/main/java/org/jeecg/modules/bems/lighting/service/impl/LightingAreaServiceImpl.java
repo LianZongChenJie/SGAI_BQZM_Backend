@@ -2,10 +2,6 @@ package org.jeecg.modules.bems.lighting.service.impl;
 
 import cn.hutool.core.collection.CollectionUtil;
 import com.alibaba.fastjson.JSONObject;
-import org.apache.poi.ss.usermodel.Workbook;
-import org.jeecgframework.poi.excel.ExcelExportUtil;
-import org.jeecgframework.poi.excel.entity.ExportParams;
-import org.jeecgframework.poi.excel.entity.enmus.ExcelType;
 import com.baomidou.mybatisplus.core.conditions.Wrapper;
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.baomidou.mybatisplus.core.conditions.update.LambdaUpdateWrapper;
@@ -14,6 +10,7 @@ import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
 import com.baomidou.mybatisplus.extension.service.impl.ServiceImpl;
 import lombok.extern.slf4j.Slf4j;
 import org.apache.commons.lang3.StringUtils;
+import org.apache.poi.ss.usermodel.Workbook;
 import org.jeecg.common.exception.JeecgBootException;
 import org.jeecg.modules.bems.lighting.dto.LightingAreaExportDto;
 import org.jeecg.modules.bems.lighting.dto.LightingAreaQueryDto;
@@ -22,15 +19,14 @@ import org.jeecg.modules.bems.lighting.entity.LightingCircuit;
 import org.jeecg.modules.bems.lighting.entity.LightingDistrict;
 import org.jeecg.modules.bems.lighting.entity.LightingOperationLog;
 import org.jeecg.modules.bems.lighting.mapper.LightingAreaMapper;
-import org.jeecg.modules.bems.lighting.service.ILightingAreaService;
-import org.jeecg.modules.bems.lighting.service.ILightingCircuitService;
-import org.jeecg.modules.bems.lighting.service.ILightingDistrictService;
-import org.jeecg.modules.bems.lighting.service.ILightingOperationLogService;
-import org.jeecg.modules.bems.lighting.service.LightingService;
 import org.jeecg.modules.bems.lighting.mq.constant.LightingMqConstant;
 import org.jeecg.modules.bems.lighting.mq.send.LightingSendService;
-import org.springframework.beans.factory.annotation.Autowired;
+import org.jeecg.modules.bems.lighting.service.*;
+import org.jeecgframework.poi.excel.ExcelExportUtil;
+import org.jeecgframework.poi.excel.entity.ExportParams;
+import org.jeecgframework.poi.excel.entity.enmus.ExcelType;
 import org.springframework.beans.BeanUtils;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.context.annotation.Lazy;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -39,16 +35,9 @@ import javax.servlet.http.HttpServletResponse;
 import java.io.IOException;
 import java.io.OutputStream;
 import java.net.URLEncoder;
-
 import java.time.LocalDateTime;
 import java.time.format.DateTimeFormatter;
-import java.util.Collection;
-import java.util.Collections;
-import java.util.HashSet;
-import java.util.List;
-import java.util.Map;
-import java.util.Objects;
-import java.util.Set;
+import java.util.*;
 import java.util.function.Predicate;
 import java.util.stream.Collectors;
 
@@ -1077,21 +1066,22 @@ public class LightingAreaServiceImpl extends ServiceImpl<LightingAreaMapper, Lig
 
     /**
      * 四高炉（space=901）区域控制（走电箱控制小程序通道）
-     * 四高炉区域下无回路，区域本身对应一个电箱设备，area_code 即设备编号 deviceSn（如 yel_power_sg06）
+     * 区域全开/全关发送的是整箱/全回路指令，operRd 特意写死为 "0"。
+     * 四高炉区域本身对应一个电箱设备，area_code 即设备编号 deviceSn（如 yel_power_sg06）
      */
-    private void controlSgf(LightingArea area, boolean type){
+    private void controlSgf(LightingArea area, boolean type) {
         String areaCode = area.getAreaCode();
-        if(StringUtils.isEmpty(areaCode)){
+        if (StringUtils.isEmpty(areaCode)) {
             log.warn("【四高炉】区域编码为空，无法控制：areaId={}, areaName={}", area.getId(), area.getAreaName());
             return;
         }
 
-        String onOff = type ? "1" : "0";
+        String oper = type ? "1" : "0";
         log.info("【四高炉】区域控制：areaName={}, 操作={}, deviceSn={}", area.getAreaName(), type ? "全开" : "全关", areaCode);
 
         try {
-            sendService.sendSgfControl(areaCode, onOff);
-        } catch (Exception e){
+            sendService.sendSgfControl(areaCode, "0", oper);
+        } catch (Exception e) {
             log.error("【四高炉】发送电箱控制消息失败：areaId={}, areaName={}, deviceSn={}", area.getId(), area.getAreaName(), areaCode, e);
         }
 
