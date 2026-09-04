@@ -103,11 +103,16 @@ public class LightingCalendarController {
         List<LightingOperationLog> logs = loadMonthLogs(monthStartTime, monthEndTime);
         Map<String, Set<Long>> executedRelIdsByDate = buildExecutedRelIdsByDate(logs);
 
-        // 2. 查询当月 MQ 执行日志（日期 → 计划ID → 状态），用于 执行成功/执行失败 判定
-        Map<String, Map<Long, String>> executeLogStatusByDate = loadMonthExecuteLogs(monthStart, monthEnd);
+        // 2. 查询当月 MQ 执行日志：明细列表 + 日期→计划→状态 映射（用于启用计划的 成功/失败 判定）
+        List<LightingPlanExecuteLog> monthExecuteLogs = loadMonthExecuteLogList(monthStart, monthEnd);
+        Map<String, Map<Long, String>> executeLogStatusByDate = buildExecuteLogStatusByDate(monthExecuteLogs);
 
         // 3. 照明计划事件（与 plan/listPage 同源，仅启用状态）
         loadPlanEvents(monthStart, monthEnd, dayEventMap, executedRelIdsByDate, executeLogStatusByDate);
+
+        // 4. 补充历史执行日志事件：当前时间之前已实际执行过（有 MQ 执行日志），但计划现已不在启用集合
+        //    （被禁用/删除）的计划，仍按执行日志把过去已执行的日期补上，避免禁用后历史消失
+        loadHistoryExecuteLogEvents(dayEventMap, monthExecuteLogs);
 
         // 组装返回结果
         List<CalendarDayEvent> result = new ArrayList<>();
@@ -325,16 +330,22 @@ public class LightingCalendarController {
     // ==================== MQ 执行日志（执行成功/执行失败判定） ====================
 
     /**
-     * 查询指定月份的 MQ 执行日志（lighting_plan_execute_log）
-     * 返回 日期(yyyy-MM-dd) → (计划ID → 状态) 映射，用于判定 执行成功/执行失败
+     * 查询指定月份的 MQ 执行日志明细（lighting_plan_execute_log，按 id 倒序）
      */
-    private Map<String, Map<Long, String>> loadMonthExecuteLogs(LocalDate monthStart, LocalDate monthEnd) {
-        Map<String, Map<Long, String>> map = new HashMap<>();
-        List<LightingPlanExecuteLog> list = lightingPlanExecuteLogService.list(
+    private List<LightingPlanExecuteLog> loadMonthExecuteLogList(LocalDate monthStart, LocalDate monthEnd) {
+        if (monthStart == null || monthEnd == null) return new ArrayList<>();
+        return lightingPlanExecuteLogService.list(
                 new LambdaQueryWrapper<LightingPlanExecuteLog>()
                         .ge(LightingPlanExecuteLog::getExecuteDate, monthStart.format(DATE_FMT))
                         .le(LightingPlanExecuteLog::getExecuteDate, monthEnd.format(DATE_FMT))
                         .orderByDesc(LightingPlanExecuteLog::getId));
+    }
+
+    /**
+     * 由当月执行日志明细构建 日期(yyyy-MM-dd) → (计划ID → 状态) 映射，用于判定 执行成功/执行失败
+     */
+    private Map<String, Map<Long, String>> buildExecuteLogStatusByDate(List<LightingPlanExecuteLog> list) {
+        Map<String, Map<Long, String>> map = new HashMap<>();
         if (list == null || list.isEmpty()) return map;
         for (LightingPlanExecuteLog logEntry : list) {
             if (logEntry.getExecuteDate() == null || logEntry.getPlanId() == null) {
@@ -345,6 +356,85 @@ public class LightingCalendarController {
                     .putIfAbsent(logEntry.getPlanId(), logEntry.getStatus());
         }
         return map;
+    }
+
+    /**
+     * 补充历史执行日志事件：
+     * 对"当前时间之前已实际执行过（存在 MQ 执行日志）、但计划现已不在启用集合（被禁用/删除）"的计划，
+     * 仍按执行日志把过去已执行的日期补成日历事件，保证禁用定时任务后历史不消失。
+     * 只处理 执行日期 <= 今天 的历史；启用计划的执行日志已由 loadPlanEvents 生成，此处跳过避免重复。
+     */
+    private void loadHistoryExecuteLogEvents(Map<String, List<CalendarEvent>> dayEventMap,
+                                             List<LightingPlanExecuteLog> monthExecuteLogs) {
+        if (monthExecuteLogs == null || monthExecuteLogs.isEmpty()) {
+            return;
+        }
+        LocalDate today = LocalDate.now();
+        // 当前启用计划 id 集合：这些计划的事件已由 loadPlanEvents 处理，跳过，避免重复展示
+        List<LightingPlan> enabledPlans = planService.list(new LambdaQueryWrapper<LightingPlan>()
+                .eq(LightingPlan::getStatus, LightingPlan.STATUS_ENABLE));
+        Set<Long> enabledPlanIds = new HashSet<>();
+        if (enabledPlans != null) {
+            for (LightingPlan p : enabledPlans) {
+                if (p.getId() != null) enabledPlanIds.add(p.getId());
+            }
+        }
+        // 计划全量（含禁用），用于反查 operationType/planType/planName（禁用计划仍在 lighting_plan 表）
+        Map<Long, LightingPlan> planMap = new HashMap<>();
+        List<LightingPlan> allPlans = planService.list();
+        if (allPlans != null) {
+            for (LightingPlan p : allPlans) {
+                if (p.getId() != null) planMap.put(p.getId(), p);
+            }
+        }
+        // 同一天同一计划只补一次（按 (日期,计划ID) 去重，保留最新一次执行状态）
+        Set<String> handled = new HashSet<>();
+        for (LightingPlanExecuteLog logEntry : monthExecuteLogs) {
+            String executeDate = logEntry.getExecuteDate();
+            Long planId = logEntry.getPlanId();
+            if (executeDate == null || planId == null) {
+                continue;
+            }
+            // 仅补"今天及以前"已执行的日期
+            LocalDate day;
+            try {
+                day = LocalDate.parse(executeDate, DATE_FMT);
+            } catch (Exception e) {
+                continue;
+            }
+            if (day.isAfter(today)) {
+                continue;
+            }
+            // 计划仍在启用集合：已由 loadPlanEvents 生成事件，跳过
+            if (enabledPlanIds.contains(planId)) {
+                continue;
+            }
+            String dedupKey = executeDate + "|" + planId;
+            if (!handled.add(dedupKey)) {
+                continue;
+            }
+            LightingPlan plan = planMap.get(planId);
+            String planName = logEntry.getPlanName() != null ? logEntry.getPlanName()
+                    : (plan != null ? plan.getPlanName() : String.valueOf(planId));
+            String operationType = plan != null ? plan.getOperationType() : null;
+            String timeStr = logEntry.getExecutionTime() != null ? logEntry.getExecutionTime() : "00:00:00";
+            String opLabel = LightingPlan.OPERATION_TYPE_OPEN.equals(operationType) ? "开灯" : "关灯";
+            // 历史执行状态：执行日志成功→执行成功，否则(失败/待消费)→执行失败
+            String statusKey = LightingPlanExecuteLog.STATUS_SUCCESS.equals(logEntry.getStatus())
+                    ? STATUS_SUCCESS : STATUS_FAIL;
+
+            CalendarEvent ev = new CalendarEvent();
+            ev.setSource("PLAN");
+            ev.setPlanId(planId);
+            ev.setPlanName(planName);
+            ev.setLabel(timeStr + " " + opLabel);
+            // 颜色：节日计划 green，其余 blue（与 loadPlanEvents 一致）
+            ev.setColor(plan != null && plan.getPlanType() != null && plan.getPlanType().contains("节日") ? "green" : "blue");
+            ev.setPlanType(plan != null ? plan.getPlanType() : null);
+            ev.setOperationType(operationType);
+            ev.setStatus(statusKey);
+            dayEventMap.computeIfAbsent(executeDate, k -> new ArrayList<>()).add(ev);
+        }
     }
 
     /**
