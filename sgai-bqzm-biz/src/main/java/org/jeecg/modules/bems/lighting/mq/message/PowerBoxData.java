@@ -3,6 +3,7 @@ package org.jeecg.modules.bems.lighting.mq.message;
 import lombok.Data;
 
 import java.io.Serializable;
+import java.util.List;
 
 /**
  * 泛光电箱数据
@@ -32,4 +33,10 @@ public class PowerBoxData implements Serializable {
      * 设备状态（2离线，1开，0关）
      */
     private Integer devicestate;
+
+    /**
+     * 各回路功率读取状态（Base64编码后的十六进制串）
+     */
+    private List<String> powerRdState;
+
 }

@@ -23,6 +23,7 @@ import java.math.BigDecimal;
 import java.time.LocalDateTime;
 import java.time.format.DateTimeFormatter;
 import java.util.ArrayList;
+import java.util.Comparator;
 import java.util.List;
 import java.util.stream.Collectors;
 
@@ -123,6 +124,7 @@ public class LightingMsgListener {
 
     @RabbitListener(queues = LightingMqConstant.QUEUE_LIGHTING_CIRCUIT_COMSTAT, ackMode = "AUTO")
     public void comstatListener(Message message) {
+        log.info("mq消息消费成功。queue:{}，message:{}", LightingMqConstant.QUEUE_LIGHTING_CIRCUIT_COMSTAT, message);
         String body = new String(message.getBody());
         try {
             JSONObject jsonObject = JSONObject.parseObject(body);
@@ -136,7 +138,7 @@ public class LightingMsgListener {
             }
             circuitService.updateComstat(space, areaCode, circuitCode, comstat);
         } catch (Exception e) {
-            log.error("mq消息消费失败。queue:{}，message:{}", LightingMqConstant.QUEUE_LIGHTING_PLAN, body, e);
+            log.error("mq消息消费失败。queue:{}，message:{}", LightingMqConstant.QUEUE_LIGHTING_CIRCUIT_COMSTAT, body, e);
         }
     }
 
@@ -172,12 +174,15 @@ public class LightingMsgListener {
                 }
 
                 // 更新状态（存文字）
-                area.setStatus(convertStateToText(box.getDevicestate()));
+//                area.setStatus(convertStateToText(box.getDevicestate()));
                 // TODO: 如果以后改回存数字，用下面这行
                 // area.setStatus(String.valueOf(box.getDevicestate()));
-                areaService.updateById(area);
-                updateCount++;
+//                areaService.updateById(area);
 
+                // powerRdState：hex 数组，按数组顺序依次更新该区域(电箱)下的回路开关状态
+                updateAreaCircuitStates(area, box);
+
+                updateCount++;
 //                log.info("【四高炉灯控】更新区域状态：area_code={}, areaName={}, status={}",
 //                        box.getDeviceSn(), area.getAreaName(), box.getDevicestate());
             }
@@ -205,6 +210,62 @@ public class LightingMsgListener {
             default:
                 return "离线";
         }
+    }
+
+    /**
+     * 根据 powerRdState 数组更新该区域(电箱)下各回路开关状态。
+     * powerRdState 每项为 hex 字符串，按回路序(CH1..CHn)排列，数组第 i 个对应 circuit_code 序号 i+1；
+     * 每条解码：取最后一个 3a(冒号) 后的字节，若为 31('1') 表示开启，否则关闭。
+     * 回路状态更新复用 applyStatus（会同步维护开启时长等计算参数）。
+     */
+    private void updateAreaCircuitStates(LightingArea area, PowerBoxData box) {
+        List<String> powerRdState = box.getPowerRdState();
+        if (area == null || powerRdState == null || powerRdState.isEmpty()) {
+            return;
+        }
+        // 查询该区域下全部回路，按 circuit_code 数值升序（与数组顺序对应）
+        List<LightingCircuit> circuits = circuitService.list(
+                new LambdaQueryWrapper<LightingCircuit>()
+                        .eq(LightingCircuit::getAreaId, area.getId()));
+        if (circuits == null || circuits.isEmpty()) {
+            return;
+        }
+        // 按 circuit_code 数值升序，保证与 powerRdState 顺序(CH1..CHn)一致
+        circuits.sort(Comparator.comparingInt((LightingCircuit c) -> {
+            try {
+                return c.getCircuitCode() == null ? 0 : Integer.parseInt(c.getCircuitCode());
+            } catch (NumberFormatException e) {
+                return 0;
+            }
+        }));
+        for (int i = 0; i < powerRdState.size() && i < circuits.size(); i++) {
+            LightingCircuit circuit = circuits.get(i);
+            String hex = powerRdState.get(i);
+            if (circuit == null || circuit.getId() == null || StringUtils.isEmpty(hex)) {
+                continue;
+            }
+            boolean on = decodePowerRdOn(hex);
+            try {
+                circuitService.applyStatus(circuit, on ? LightingCircuit.STATUS_ON : LightingCircuit.STATUS_OFF);
+            } catch (Exception e) {
+                log.warn("【四高炉灯控】更新回路状态失败 area_code={}, circuit_code={}", area.getAreaCode(), circuit.getCircuitCode(), e);
+            }
+        }
+    }
+
+    /**
+     * 解析 powerRdState 单条 hex，判断回路是否开启：
+     * 取最后一个 3a(冒号)，其后字节为 31('1') 视为开启，否则关闭
+     */
+    private boolean decodePowerRdOn(String hex) {
+        if (StringUtils.isEmpty(hex)) {
+            return false;
+        }
+        int idx = hex.lastIndexOf("3a");
+        if (idx < 0 || idx + 4 > hex.length()) {
+            return false;
+        }
+        return "31".equalsIgnoreCase(hex.substring(idx + 2, idx + 4));
     }
 
     /**
