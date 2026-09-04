@@ -369,7 +369,7 @@ public class LightingCalendarController {
         if (monthExecuteLogs == null || monthExecuteLogs.isEmpty()) {
             return;
         }
-        LocalDate today = LocalDate.now();
+        LocalDateTime now = LocalDateTime.now();
         // 当前启用计划 id 集合：这些计划的事件已由 loadPlanEvents 处理，跳过，避免重复展示
         List<LightingPlan> enabledPlans = planService.list(new LambdaQueryWrapper<LightingPlan>()
                 .eq(LightingPlan::getStatus, LightingPlan.STATUS_ENABLE));
@@ -395,14 +395,17 @@ public class LightingCalendarController {
             if (executeDate == null || planId == null) {
                 continue;
             }
-            // 仅补"今天及以前"已执行的日期
-            LocalDate day;
+            // 仅补"执行时刻已经过去"的历史（日期 + 执行时间都早于当前时间才算历史，
+            // 否则像"今天 18:00 查看 22:00 的计划"这种当天未到执行时刻的待执行会误当历史展示）
+            LocalDateTime execMoment;
             try {
-                day = LocalDate.parse(executeDate, DATE_FMT);
+                LocalDate day = LocalDate.parse(executeDate, DATE_FMT);
+                LocalTime execTime = parseExecTime(logEntry.getExecutionTime());
+                execMoment = day.atTime(execTime);
             } catch (Exception e) {
                 continue;
             }
-            if (day.isAfter(today)) {
+            if (!execMoment.isBefore(now)) {
                 continue;
             }
             // 计划仍在启用集合：已由 loadPlanEvents 生成事件，跳过
@@ -434,6 +437,28 @@ public class LightingCalendarController {
             ev.setOperationType(operationType);
             ev.setStatus(statusKey);
             dayEventMap.computeIfAbsent(executeDate, k -> new ArrayList<>()).add(ev);
+        }
+    }
+
+    /**
+     * 解析执行日志里的时间字符串(可能 HH:mm、HH:mm:ss)，缺省补 00:00:00
+     */
+    private LocalTime parseExecTime(String execTime) {
+        if (StringUtils.isEmpty(execTime)) {
+            return LocalTime.MIN;
+        }
+        String t = execTime.trim();
+        try {
+            if (t.length() <= 5) {
+                return LocalTime.parse(t, DateTimeFormatter.ofPattern("HH:mm"));
+            }
+            return LocalTime.parse(t, DateTimeFormatter.ofPattern("HH:mm:ss"));
+        } catch (Exception e) {
+            try {
+                return LocalTime.parse(t);
+            } catch (Exception e2) {
+                return LocalTime.MIN;
+            }
         }
     }
 
