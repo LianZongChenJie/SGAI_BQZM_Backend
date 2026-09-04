@@ -17,11 +17,15 @@ import org.jeecg.modules.bems.lighting.service.ILightingDistrictService;
 import org.jeecg.modules.bems.lighting.vo.BoxTreeAreaVo;
 import org.jeecg.modules.bems.lighting.vo.BoxTreeBoxVo;
 import org.jeecg.modules.bems.lighting.vo.BoxTreeVo;
+import org.jeecg.modules.bems.lighting.vo.EnergyMeterDetailVo;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
+import java.math.BigDecimal;
 import java.text.ParseException;
 import java.text.SimpleDateFormat;
+import java.time.LocalDateTime;
+import java.time.ZoneId;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.Date;
@@ -235,6 +239,78 @@ public class LightingBoxTelemetryServiceImpl extends ServiceImpl<LightingBoxTele
         if (end != null) qw.le(LightingBoxTelemetryHistory::getCollectTime, end);
         qw.orderByAsc(LightingBoxTelemetryHistory::getCollectTime);
         return historyMapper.selectList(qw);
+    }
+
+    @Override
+    public List<EnergyMeterDetailVo> meterReadDetail(String gatewayCode, Date start, Date end) {
+        List<EnergyMeterDetailVo> result = new ArrayList<>();
+        if (gatewayCode == null || gatewayCode.isEmpty()) {
+            return result;
+        }
+        // 1. 区间内该网关全部有效表底记录，升序
+        LambdaQueryWrapper<LightingBoxTelemetryHistory> qw = new LambdaQueryWrapper<>();
+        qw.eq(LightingBoxTelemetryHistory::getGatewayCode, gatewayCode)
+                .isNotNull(LightingBoxTelemetryHistory::getTotalEnergy);
+        if (start != null) {
+            qw.ge(LightingBoxTelemetryHistory::getCollectTime, start);
+        }
+        if (end != null) {
+            qw.le(LightingBoxTelemetryHistory::getCollectTime, end);
+        }
+        qw.orderByAsc(LightingBoxTelemetryHistory::getCollectTime);
+        List<LightingBoxTelemetryHistory> rows = historyMapper.selectList(qw);
+        if (rows == null || rows.isEmpty()) {
+            return result;
+        }
+        // 2. 取 start 之前最近一次表底作为首段起点基准（更精确还原各时段用电量），无基准则从首条自身开始
+        BigDecimal baseline = null;
+        if (start != null) {
+            try {
+                LightingBoxTelemetryHistory base = historyMapper.selectLastBeforeByGateway(
+                        gatewayCode, toLocalDateTime(start));
+                if (base != null && base.getTotalEnergy() != null) {
+                    baseline = BigDecimal.valueOf(base.getTotalEnergy());
+                }
+            } catch (Exception e) {
+                log.warn("【区间抄表详情】查开始基准失败 gatewayCode={}", gatewayCode, e);
+            }
+        }
+        // 3. 逐条计算每段用电量增量（本条表底 - 上一条/基准表底）与累计用电量
+        BigDecimal cumulative = BigDecimal.ZERO;
+        BigDecimal prev = baseline;
+        boolean first = true;
+        for (LightingBoxTelemetryHistory row : rows) {
+            if (row.getTotalEnergy() == null) {
+                continue;
+            }
+            EnergyMeterDetailVo vo = new EnergyMeterDetailVo();
+            vo.setGatewayCode(gatewayCode);
+            vo.setCollectTime(row.getCollectTime());
+            vo.setTotalEnergy(BigDecimal.valueOf(row.getTotalEnergy()));
+            BigDecimal cur = BigDecimal.valueOf(row.getTotalEnergy());
+            BigDecimal energy;
+            if (first && prev == null) {
+                // 无任何基准：无法算首段差值，用电量按 0 处理
+                energy = BigDecimal.ZERO;
+            } else {
+                energy = cur.subtract(prev).max(BigDecimal.ZERO);
+            }
+            vo.setEnergy(energy);
+            cumulative = cumulative.add(energy);
+            vo.setCumulative(cumulative);
+            result.add(vo);
+            prev = cur;
+            first = false;
+        }
+        return result;
+    }
+
+    /** Date 转 LocalDateTime（系统时区） */
+    private LocalDateTime toLocalDateTime(Date date) {
+        if (date == null) {
+            return null;
+        }
+        return LocalDateTime.ofInstant(date.toInstant(), ZoneId.systemDefault());
     }
 
     /** 区域信息：区域主键 + 区域名 + 所属片区id */

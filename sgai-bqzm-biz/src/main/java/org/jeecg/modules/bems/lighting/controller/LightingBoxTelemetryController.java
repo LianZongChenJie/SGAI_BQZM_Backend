@@ -10,6 +10,7 @@ import org.jeecg.modules.bems.lighting.entity.LightingBoxTelemetry;
 import org.jeecg.modules.bems.lighting.entity.LightingBoxTelemetryHistory;
 import org.jeecg.modules.bems.lighting.service.ILightingBoxTelemetryService;
 import org.jeecg.modules.bems.lighting.vo.BoxTreeVo;
+import org.jeecg.modules.bems.lighting.vo.EnergyMeterDetailVo;
 import org.jeecg.modules.bems.permission.annotation.DataPermission;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.RequestMapping;
@@ -63,6 +64,26 @@ public class LightingBoxTelemetryController {
             Date s = start == null || start.isEmpty() ? null : DF.parse(start);
             Date e = end == null || end.isEmpty() ? null : DF.parse(end);
             return Result.ok(boxTelemetryService.history(gatewayCode, s, e));
+        } catch (ParseException ex) {
+            return Result.error("时间格式错误，需 yyyy-MM-dd HH:mm:ss");
+        }
+    }
+
+    @ApiOperation("区间抄表-详情(按网关+起止时间查该段逐条表底/用电量)")
+    @ApiImplicitParams({
+            @ApiImplicitParam(name = "gatewayCode", value = "箱子编号", paramType = "query", required = true, dataType = "string"),
+            @ApiImplicitParam(name = "start", value = "区间开始时间(yyyy-MM-dd HH:mm:ss)", paramType = "query", dataType = "string"),
+            @ApiImplicitParam(name = "end", value = "区间结束时间(yyyy-MM-dd HH:mm:ss)", paramType = "query", dataType = "string")
+    })
+    @DataPermission
+    @GetMapping("/meterReadDetail")
+    public Result<List<EnergyMeterDetailVo>> meterReadDetail(@RequestParam String gatewayCode,
+                                                             @RequestParam(required = false) String start,
+                                                             @RequestParam(required = false) String end) {
+        try {
+            Date s = start == null || start.isEmpty() ? null : DF.parse(start);
+            Date e = end == null || end.isEmpty() ? null : DF.parse(end);
+            return Result.ok(boxTelemetryService.meterReadDetail(gatewayCode, s, e));
         } catch (ParseException ex) {
             return Result.error("时间格式错误，需 yyyy-MM-dd HH:mm:ss");
         }
