@@ -122,6 +122,32 @@ public class LightingCircuit {
     private String alarmFlag;
 
     /**
+     * 报警命中的规则编码（R1/R2/R3/R4/R5C/R5M）
+     */
+    @ApiModelProperty(value = "报警命中的规则编码")
+    private String alarmRuleCode;
+
+    /**
+     * 报警命中的规则名称（如 开路·灯具失效）
+     */
+    @ApiModelProperty(value = "报警命中的规则名称")
+    private String alarmRuleName;
+
+    /**
+     * 报警发生时间
+     */
+    @JsonFormat(pattern = "yyyy-MM-dd HH:mm:ss")
+    @DateTimeFormat(pattern = "yyyy-MM-dd HH:mm:ss")
+    @ApiModelProperty(value = "报警发生时间")
+    private LocalDateTime alarmTime;
+
+    /**
+     * 报警详情/判定依据
+     */
+    @ApiModelProperty(value = "报警详情")
+    private String alarmDetail;
+
+    /**
      * 空间名称
      */
     @TableField(exist = false)
