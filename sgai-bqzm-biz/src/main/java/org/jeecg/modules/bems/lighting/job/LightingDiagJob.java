@@ -1,24 +1,28 @@
 package org.jeecg.modules.bems.lighting.job;
 
-import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import cn.hutool.core.collection.CollectionUtil;
+import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import lombok.AllArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.jeecg.modules.bems.lighting.entity.LightingArea;
 import org.jeecg.modules.bems.lighting.entity.LightingBoxTelemetry;
 import org.jeecg.modules.bems.lighting.entity.LightingCircuit;
+import org.jeecg.modules.bems.lighting.entity.LightingCircuitAlarm;
 import org.jeecg.modules.bems.lighting.entity.LightingCircuitAlarmLog;
 import org.jeecg.modules.bems.lighting.entity.LightingDiagRule;
 import org.jeecg.modules.bems.lighting.service.ILightingAreaService;
 import org.jeecg.modules.bems.lighting.service.ILightingBoxTelemetryService;
 import org.jeecg.modules.bems.lighting.service.ILightingCircuitAlarmLogService;
+import org.jeecg.modules.bems.lighting.service.ILightingCircuitAlarmService;
 import org.jeecg.modules.bems.lighting.service.ILightingCircuitService;
 import org.jeecg.modules.bems.lighting.service.ILightingDiagRuleService;
 import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Component;
 
 import java.time.LocalDateTime;
-import java.util.Collections;
+import java.util.ArrayList;
+import java.util.HashMap;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
@@ -27,22 +31,21 @@ import java.util.function.Function;
 import java.util.stream.Collectors;
 
 /**
- * 照明回路智能诊断定时任务（R1 开路·灯具失效 / R2 触点粘连·漏电 / R4 过载）
+ * 照明回路智能诊断定时任务（R1 开路 / R2 粘连·漏电 / R3 电压越限 / R4 过载）
  * <p>
- * 判定口径（与规则表一致）：
+ * 判定口径（与规则表一致，命中后统一写入"当前命中明细表 lighting_circuit_alarm"，一行=回路×规则）：
  * <ul>
- *   <li>R1(开路)：回路 status=开启 且 电流接近零(&lt; 0.5A)，连续 3 拍(约3分钟)→报警。</li>
- *   <li>R2(粘连/漏电)：回路 status=关闭 且 残留电流 &gt; 0.2A，连续 3 拍(约3分钟)→报警。</li>
- *   <li>R4(过载)：回路 status=开启 且 电流 &gt; 额定电流，连续 3 拍(约3分钟)→报警。</li>
+ *   <li>R1(开路,alarm)：开启 且 电流 &lt; 0.5A（接近零），3 拍确认。</li>
+ *   <li>R2(粘连/漏电,alarm)：关闭 且 残留电流 &gt; 0.2A，3 拍确认。</li>
+ *   <li>R3(电压越限,warn)：任一相电压出带(198~242V) → 该箱下每回路各记一条，1 拍确认。</li>
+ *   <li>R4(过载,alarm)：开启 且 电流 &gt; 额定电流，3 拍确认。</li>
+ *   <li>R5C(通信中断,alarm)：某箱所有回路 comstat=离线 → 箱级通信中断，冗余到该箱每回路；此时冻结数据，暂停该箱 R1/R2/R3/R4 判定。</li>
  * </ul>
- * 开启态同一回路只会命中 R1 或 R4 之一（开路/过载/正常互斥），按 R1→R4→正常 优先级判定。
- * 恢复逻辑：已报警回路连续 3 拍不再满足对应规则 → 恢复为"正常"并清空命中规则信息。
+ * 同一回路可同时命中多条规则（如 R1+R3 / R4+R3），各级别并存；因此采用命中表而非单列表达。
+ * R1/R4 仅在本箱三相供电基本正常(180~253V，排除上级失电)时判定；R3 只由箱电压本身决定；R2 不依赖电压；
+ * R5C 按箱 comstat 判定并压制同箱其它电气规则（冻结值不参与判定）。
  * <p>
- * 前置排除：开启态判定前先看所属箱子三相电压是否正常，箱级电压异常(上级失电)则该箱回路本轮跳过，
- * 避免"整箱断电→所有开启回路开而无流"被连片误报成单回路开路。R2 不需要电压排除。
- * <p>
- * 去抖状态放在进程内存（ConcurrentHashMap），重启后归零、需重新累积。
- * 范围：仅扫描 903（北区公区）空间下区域对应的回路。
+ * 范围：仅扫描 903（北区公区）空间。历史追溯仍写 lighting_circuit_alarm_log（一次报警生命周期）。
  */
 @Component
 @AllArgsConstructor
@@ -52,388 +55,347 @@ public class LightingDiagJob {
     /** 北区公区空间编码 */
     private static final String SPACE_BQ = "903";
 
-    /** R1/R2/R4 规则编码 */
-    private static final String RULE_CODE_R1 = "R1";
-    private static final String RULE_CODE_R2 = "R2";
-    private static final String RULE_CODE_R4 = "R4";
+    /** 规则编码 */
+    private static final String RULE_R1 = "R1";
+    private static final String RULE_R2 = "R2";
+    private static final String RULE_R3 = "R3";
+    private static final String RULE_R4 = "R4";
+    private static final String RULE_R5C = "R5C";
 
-    /** R1/R2/R4 默认规则名称（规则表缺失时兜底） */
-    private static final String RULE_NAME_R1_DEFAULT = "开路·灯具失效";
-    private static final String RULE_NAME_R2_DEFAULT = "触点粘连·漏电";
-    private static final String RULE_NAME_R4_DEFAULT = "过载";
-
-    /** R1 开路阈值(A)：开启状态电流低于此值(接近零)判定开路/不亮 */
+    /** R1 开路阈值(A)：开启态电流低于此(接近零)判开路 */
     private static final double R1_OPEN_CURRENT = 0.5;
-
-    /** R2 残留电流阈值(A)：关闭状态下电流高于此值判定粘连/漏电 */
+    /** R2 残留电流阈值(A)：关闭态电流高于此判粘连/漏电 */
     private static final double R2_STUCK_CURRENT = 0.2;
 
-    /** 连续命中/连续恢复达到该次数即标记/恢复（每 1 分钟一拍，3 次≈3 分钟） */
-    private static final int CONFIRM_COUNT = 3;
-
-    /** 箱级三相电压有效下限/上限(V)：相电压低于下限视为该相失电/缺相，高于上限视为越限 */
+    /** R1/R4 供电基本正常带(排除上级失电) */
     private static final double VOLTAGE_LOW = 180.0;
     private static final double VOLTAGE_HIGH = 253.0;
+    /** R3 电压越限带：任一相超出即欠压/过压 */
+    private static final double R3_V_LO = 198.0;
+    private static final double R3_V_HI = 242.0;
+
+    /** 每规则确认拍数：R3(电压)1 拍，其余 3 拍 */
+    private static final Map<String, Integer> CONFIRM = new HashMap<>();
+    static {
+        CONFIRM.put(RULE_R1, 3);
+        CONFIRM.put(RULE_R2, 3);
+        CONFIRM.put(RULE_R3, 1);
+        CONFIRM.put(RULE_R4, 3);
+        CONFIRM.put(RULE_R5C, 3);
+    }
 
     private final ILightingCircuitService circuitService;
-
     private final ILightingAreaService areaService;
-
     private final ILightingDiagRuleService diagRuleService;
-
     private final ILightingBoxTelemetryService boxTelemetryService;
-
+    private final ILightingCircuitAlarmService alarmService;
     private final ILightingCircuitAlarmLogService alarmLogService;
 
-    /** R1 去抖计数：circuitId -> 连续命中/连续恢复次数 */
-    private final Map<Long, Integer> r1Hit = new ConcurrentHashMap<>();
-    private final Map<Long, Integer> r1Recover = new ConcurrentHashMap<>();
-
-    /** R2 去抖计数：circuitId -> 连续命中/连续恢复次数 */
-    private final Map<Long, Integer> r2Hit = new ConcurrentHashMap<>();
-    private final Map<Long, Integer> r2Recover = new ConcurrentHashMap<>();
-
-    /** R4 去抖计数：circuitId -> 连续命中/连续恢复次数 */
-    private final Map<Long, Integer> r4Hit = new ConcurrentHashMap<>();
-    private final Map<Long, Integer> r4Recover = new ConcurrentHashMap<>();
+    /** 去抖缓冲：circuitId -> (ruleCode -> 连续命中拍数) */
+    private final Map<Long, Map<String, Integer>> hitBuf = new ConcurrentHashMap<>();
+    /** 上一轮最终命中 key（circuitId:ruleCode），用于驱动历史流水 diff */
+    private final Set<String> prevFinalKeys = ConcurrentHashMap.newKeySet();
 
     @Scheduled(cron = "0 * * * * ?")
     public void runDiagnose() {
         try {
             scanBqDiagnose();
         } catch (Exception e) {
-            log.error("【诊断】开路/粘连诊断定时任务异常", e);
+            log.error("【诊断】开路/粘连/电压/过载诊断定时任务异常", e);
         }
     }
 
-    /**
-     * 扫描 903 空间下所有区域对应的回路，按开关状态路由到 R1(开启) / R2(关闭) 判定
-     */
     private void scanBqDiagnose() {
-        // 903 空间下的所有区域
         List<LightingArea> areas = areaService.list(new LambdaQueryWrapper<LightingArea>()
                 .eq(LightingArea::getSpace, SPACE_BQ));
         if (CollectionUtil.isEmpty(areas)) {
-            clearCounters();
+            clearAll();
             return;
         }
         Set<Long> areaIds = areas.stream().map(LightingArea::getId).collect(Collectors.toSet());
-        // 这些区域下的全部回路
+        Map<Long, LightingArea> areaMap = areas.stream()
+                .collect(Collectors.toMap(LightingArea::getId, Function.identity(), (a, b) -> a));
         List<LightingCircuit> circuits = circuitService.list(new LambdaQueryWrapper<LightingCircuit>()
                 .in(LightingCircuit::getAreaId, areaIds));
         if (CollectionUtil.isEmpty(circuits)) {
-            clearCounters();
+            clearAll();
             return;
         }
+        // 箱电压快照 areaId -> box
+        Map<Long, LightingBoxTelemetry> boxMap = loadBoxVoltageMap(areaIds);
 
-        LightingDiagRule r1 = diagRuleService.getEnabledByCode(RULE_CODE_R1);
-        LightingDiagRule r2 = diagRuleService.getEnabledByCode(RULE_CODE_R2);
-        LightingDiagRule r4 = diagRuleService.getEnabledByCode(RULE_CODE_R4);
-        String r1Name = r1 != null && r1.getName() != null ? r1.getName() : RULE_NAME_R1_DEFAULT;
-        String r2Name = r2 != null && r2.getName() != null ? r2.getName() : RULE_NAME_R2_DEFAULT;
-        String r4Name = r4 != null && r4.getName() != null ? r4.getName() : RULE_NAME_R4_DEFAULT;
+        // 整箱通信中断判定：某区域有回路且所有回路 comstat=离线 → 判为箱级通信中断
+        Set<Long> commDownAreaIds = computeCommDownAreas(circuits);
+
+        // 规则元数据：ruleCode -> (name, level)；缺失时按默认名称+级别兜底
+        Map<String, RuleMeta> ruleMeta = loadRuleMeta();
+
         LocalDateTime now = LocalDateTime.now();
 
-        // 箱级三相电压快照：areaId -> 箱子遥测，仅 R1(开启态)判定用于前置排除上级失电
-        Map<Long, LightingBoxTelemetry> boxMap = loadBoxVoltageMap(areaIds);
-        // 区域映射：areaId -> area，用于报警流水回填 区域名/空间
-        Map<Long, LightingArea> areaMap = areas.stream()
-                .collect(Collectors.toMap(LightingArea::getId, Function.identity(), (a, b) -> a));
-
-        int hitAlarm = 0;   // 本轮新标记报警数
-        int hitRecover = 0; // 本轮恢复数
-        int skipped = 0;    // 本轮被跳过的回路数（电压异常/未知状态）
+        // 本轮"最终命中"（已过确认拍数）
+        Map<Long, List<LightingCircuitAlarm>> finalHits = new HashMap<>();
 
         for (LightingCircuit circuit : circuits) {
-            Long circuitId = circuit.getId();
+            Long cid = circuit.getId();
             LightingArea area = areaMap.get(circuit.getAreaId());
-            String status = circuit.getStatus();
-            if (LightingCircuit.STATUS_ON.equals(status)) {
-                // —— 开启态：可命中 R1(开路) 或 R4(过载)，需先做箱级三相电压前置排除 ——
-                LightingBoxTelemetry box = boxMap.get(circuit.getAreaId());
-                if (!isBoxVoltageOk(box)) {
-                    // 箱级电压异常(上级失电)：本箱开启回路无法判定开路/过载，跳过
-                    r1Hit.remove(circuitId);
-                    r1Recover.remove(circuitId);
-                    r4Hit.remove(circuitId);
-                    r4Recover.remove(circuitId);
-                    skipped++;
-                    continue;
+            LightingBoxTelemetry box = boxMap.get(circuit.getAreaId());
+
+            // 1) 计算本轮候选命中规则
+            List<String> candidates = computeCandidates(circuit, area, box, commDownAreaIds, ruleMeta);
+            // 2) 去抖：更新 hitBuf
+            Map<String, Integer> buf = hitBuf.computeIfAbsent(cid, k -> new ConcurrentHashMap<>());
+            Set<String> candSet = new HashSet<>(candidates);
+            buf.keySet().removeIf(code -> !candSet.contains(code)); // 候选外清零
+            for (String code : candidates) {
+                int cnt = buf.merge(code, 1, Integer::sum);
+                int need = CONFIRM.getOrDefault(code, 3);
+                if (cnt >= need) {
+                    finalHits.computeIfAbsent(cid, k -> new ArrayList<>()).add(buildAlarmHit(circuit, area, code, ruleMeta, now));
                 }
-                int marked;
-                if (isR1Abnormal(circuit)) {
-                    marked = handleCircuit(circuit, area, now, true,
-                            r1Hit, r1Recover, RULE_CODE_R1, r1Name, buildR1Detail(circuit));
-                } else if (isR4Abnormal(circuit)) {
-                    marked = handleCircuit(circuit, area, now, true,
-                            r4Hit, r4Recover, RULE_CODE_R4, r4Name, buildR4Detail(circuit));
-                } else {
-                    // 开启态无异常：R1/R4 都恢复；按当前命中规则走恢复去抖
-                    marked = handleOnNormal(circuit, area, now);
-                }
-                if (marked > 0) {
-                    hitAlarm++;
-                } else if (marked < 0) {
-                    hitRecover++;
-                }
-            } else if (LightingCircuit.STATUS_OFF.equals(status)) {
-                // —— 关闭态：走 R2，无需电压排除 ——
-                boolean abnormal = isR2Abnormal(circuit);
-                int marked = handleCircuit(circuit, area, now, abnormal,
-                        r2Hit, r2Recover, RULE_CODE_R2, r2Name,
-                        buildR2Detail(circuit));
-                if (marked > 0) {
-                    hitAlarm++;
-                } else if (marked < 0) {
-                    hitRecover++;
-                }
-            } else {
-                // 未知/其它状态：不参与判定，清空相关去抖计数
-                r1Hit.remove(circuitId);
-                r1Recover.remove(circuitId);
-                r2Hit.remove(circuitId);
-                r2Recover.remove(circuitId);
-                r4Hit.remove(circuitId);
-                r4Recover.remove(circuitId);
-                skipped++;
             }
         }
 
-        // 清理不在本轮扫描范围的陈旧计数（例如回路被删除/移出 903）
+        // 3) 汇总本轮最终命中行
+        List<LightingCircuitAlarm> newHitsRows = new ArrayList<>();
+        for (List<LightingCircuitAlarm> rows : finalHits.values()) {
+            newHitsRows.addAll(rows);
+        }
+        Set<String> currentKeys = new HashSet<>();
+        for (Map.Entry<Long, List<LightingCircuitAlarm>> e : finalHits.entrySet()) {
+            for (LightingCircuitAlarm a : e.getValue()) {
+                currentKeys.add(keyOf(e.getKey(), a.getRuleCode()));
+            }
+        }
+
+        // 4) 重建命中表（903 全量替换）
+        alarmService.rebuildBySpace(SPACE_BQ, newHitsRows);
+
+        // 5) 历史流水 diff：
+        //    新增命中（本轮有、上轮无）→ 写一条"报警中"开始；消失（上轮有、本轮无）→ 回填恢复
+        Set<String> goneKeys = new HashSet<>(prevFinalKeys);
+        goneKeys.removeAll(currentKeys);
+        Set<String> newKeys = new HashSet<>(currentKeys);
+        newKeys.removeAll(prevFinalKeys);
+
+        List<LightingCircuitAlarm> allHits = finalHits.values().stream()
+                .flatMap(List::stream).collect(Collectors.toList());
+        Map<String, LightingCircuitAlarm> hitByKey = new HashMap<>();
+        for (LightingCircuitAlarm a : allHits) {
+            hitByKey.put(keyOf(a.getCircuitId(), a.getRuleCode()), a);
+        }
+        int logNew = 0;
+        for (String k : newKeys) {
+            LightingCircuitAlarm a = hitByKey.get(k);
+            if (a != null && !hasActiveLog(a.getCircuitId(), a.getRuleCode())) {
+                writeLogStart(a);
+                logNew++;
+            }
+        }
+        int logRecover = 0;
+        for (String k : goneKeys) {
+            // 用上一轮该(回路,规则)的 alarmTime 作为开始时间不太必要，恢复用本轮时间即可
+            String[] p = k.split(":");
+            try {
+                if (p.length == 2 && alarmLogService.recoverAlarm(Long.parseLong(p[0]), p[1], now)) {
+                    logRecover++;
+                }
+            } catch (Exception ignore) {
+                // ignore malformed key
+            }
+        }
+
+        // 6) 更新上轮最终命中 & 清理 hitBuf 陈旧
+        prevFinalKeys.clear();
+        prevFinalKeys.addAll(currentKeys);
         Set<Long> scannedIds = circuits.stream().map(LightingCircuit::getId).collect(Collectors.toSet());
-        pruneCounters(scannedIds);
+        hitBuf.keySet().removeIf(id -> !scannedIds.contains(id));
 
-        if (hitAlarm > 0 || hitRecover > 0 || skipped > 0) {
-            log.info("【诊断】开路/粘连诊断执行完毕：新增报警 {} 条，恢复 {} 条，跳过 {} 回路",
-                    hitAlarm, hitRecover, skipped);
-        }
+        log.info("【诊断】903 诊断完成：当前命中 {} 条(规则x回路)，历史新增 {} 条，恢复 {} 条",
+                newHitsRows.size(), logNew, logRecover);
     }
 
     /**
-     * 通用去抖处理。
-     *
-     * @return 1=本轮新标记报警；-1=本轮恢复；0=无变化
+     * 计算某回路本轮候选命中规则（未去抖）
      */
-    private int handleCircuit(LightingCircuit circuit, LightingArea area, LocalDateTime now, boolean abnormal,
-                              Map<Long, Integer> hitCounter, Map<Long, Integer> recoverCounter,
-                              String ruleCode, String ruleName, String alarmDetail) {
-        Long circuitId = circuit.getId();
-        if (abnormal) {
-            // 异常：累计命中
-            hitCounter.merge(circuitId, 1, Integer::sum);
-            recoverCounter.remove(circuitId);
-            int count = hitCounter.getOrDefault(circuitId, 0);
-            // 未报警且达到确认次数才标记；已报警的不再重复置位
-            if (count >= CONFIRM_COUNT && !isAlarm(circuit)) {
-                markAlarm(circuit, area, now, ruleCode, ruleName, alarmDetail);
-                return 1;
-            }
-        } else {
-            // 正常：清零命中，累计恢复
-            hitCounter.remove(circuitId);
-            if (isAlarm(circuit)) {
-                recoverCounter.merge(circuitId, 1, Integer::sum);
-                int count = recoverCounter.getOrDefault(circuitId, 0);
-                if (count >= CONFIRM_COUNT) {
-                    clearAlarm(circuit, now);
-                    recoverCounter.remove(circuitId);
-                    return -1;
+    private List<String> computeCandidates(LightingCircuit circuit, LightingArea area,
+                                           LightingBoxTelemetry box, Set<Long> commDownAreaIds,
+                                           Map<String, RuleMeta> ruleMeta) {
+        List<String> hits = new ArrayList<>();
+        if (ruleMeta.isEmpty()) {
+            return hits;
+        }
+        Long areaId = area != null ? area.getId() : circuit.getAreaId();
+
+        // 整箱通信中断：该箱所有回路离线 → 只报 R5C，冻结数据暂停其它电气判定
+        if (areaId != null && commDownAreaIds.contains(areaId)) {
+            hits.add(RULE_R5C);
+            return hits;
+        }
+
+        // 单回路离线(非整箱中断)：冻结数据不参与 R1/R2/R4 电气判定；R3(箱电压)仍可判
+        boolean ownOffline = LightingCircuit.COMSTAT_OFFLINE.equals(circuit.getComstat());
+
+        // R3 电压越限：箱电压任一相出带(有遥测)。冗余到该回路。
+        if (box != null && !allInVoltageBand(box, R3_V_LO, R3_V_HI)) {
+            hits.add(RULE_R3);
+        }
+        if (ownOffline) {
+            // 离线回路的电流为冻结值，不判 R1/R2/R4
+            return hits;
+        }
+
+        String status = circuit.getStatus();
+        boolean on = LightingCircuit.STATUS_ON.equals(status);
+        boolean off = LightingCircuit.STATUS_OFF.equals(status);
+        Double cur = circuit.getElectricCurrent();
+        if (on && isPowerNormal(box)) {
+            // 供电基本正常才判 R1/R4
+            if (cur != null && cur < R1_OPEN_CURRENT) {
+                hits.add(RULE_R1);
+            } else {
+                Double rated = circuit.getRatedElectricCurrent();
+                if (cur != null && rated != null && rated > 0 && cur > rated) {
+                    hits.add(RULE_R4);
                 }
-            } else {
-                recoverCounter.remove(circuitId);
+            }
+        } else if (off) {
+            // R2 不依赖箱电压
+            if (cur != null && cur > R2_STUCK_CURRENT) {
+                hits.add(RULE_R2);
             }
         }
-        return 0;
+        return hits;
     }
 
-    /**
-     * 开启态回路处于正常范围(既非开路也非过载)时的恢复处理。
-     * R1/R4 共用当前回路的一条报警记录；按当前命中的规则走对应恢复去抖。
-     *
-     * @return 1=标记报警(理论不发生)；-1=恢复；0=无变化
-     */
-    private int handleOnNormal(LightingCircuit circuit, LightingArea area, LocalDateTime now) {
-        Long circuitId = circuit.getId();
-        // 正常：R1/R4 命中计数都清零
-        r1Hit.remove(circuitId);
-        r4Hit.remove(circuitId);
-        if (isAlarm(circuit)) {
-            // 当前命中规则决定用哪套恢复计数
-            String ruleCode = circuit.getAlarmRuleCode();
-            Map<Long, Integer> recoverCounter =
-                    RULE_CODE_R4.equals(ruleCode) ? r4Recover : r1Recover;
-            recoverCounter.merge(circuitId, 1, Integer::sum);
-            if (RULE_CODE_R4.equals(ruleCode)) {
-                r1Recover.remove(circuitId);
-            } else {
-                r4Recover.remove(circuitId);
-            }
-            int count = recoverCounter.getOrDefault(circuitId, 0);
-            if (count >= CONFIRM_COUNT) {
-                clearAlarm(circuit, now);
-                recoverCounter.remove(circuitId);
-                return -1;
-            }
-        } else {
-            r1Recover.remove(circuitId);
-            r4Recover.remove(circuitId);
+    private LightingCircuitAlarm buildAlarmHit(LightingCircuit c, LightingArea area, String code,
+                                               Map<String, RuleMeta> ruleMeta, LocalDateTime now) {
+        RuleMeta meta = ruleMeta.getOrDefault(code, new RuleMeta(code));
+        LightingCircuitAlarm a = new LightingCircuitAlarm();
+        a.setCircuitId(c.getId());
+        a.setCircuitCode(c.getCircuitCode());
+        a.setCircuitName(c.getCircuitName());
+        a.setAreaId(c.getAreaId());
+        a.setAreaName(area != null ? area.getAreaName() : null);
+        a.setSpace(area != null ? area.getSpace() : SPACE_BQ);
+        a.setRuleCode(code);
+        a.setRuleName(meta.name);
+        a.setRuleLevel(meta.level);
+        a.setAlarmTime(now);
+        return a;
+    }
+
+    private Map<String, RuleMeta> loadRuleMeta() {
+        Map<String, RuleMeta> map = new HashMap<>();
+        addRuleMeta(map, diagRuleService.getEnabledByCode(RULE_R1), RULE_R1, "开路·灯具失效", "alarm");
+        addRuleMeta(map, diagRuleService.getEnabledByCode(RULE_R2), RULE_R2, "触点粘连·漏电", "alarm");
+        addRuleMeta(map, diagRuleService.getEnabledByCode(RULE_R3), RULE_R3, "电压越限", "warn");
+        addRuleMeta(map, diagRuleService.getEnabledByCode(RULE_R4), RULE_R4, "过载", "alarm");
+        addRuleMeta(map, diagRuleService.getEnabledByCode(RULE_R5C), RULE_R5C, "通信中断", "alarm");
+        return map;
+    }
+
+    private void addRuleMeta(Map<String, RuleMeta> map, LightingDiagRule r, String code, String defName, String defLevel) {
+        if (r == null) {
+            return;
         }
-        return 0;
+        map.put(code, new RuleMeta(
+                r.getName() != null ? r.getName() : defName,
+                r.getRuleLevel() != null ? r.getRuleLevel() : defLevel));
     }
 
-    /**
-     * R1 异常判定：开启状态电流接近零(低于 0.5A)判定开路/不亮，与额定电流无关
-     */
-    private boolean isR1Abnormal(LightingCircuit circuit) {
-        Double current = circuit.getElectricCurrent();
-        return current != null && current < R1_OPEN_CURRENT;
-    }
-
-    /**
-     * R4 异常判定：开启状态电流超过该回路额定电流，判定过载
-     */
-    private boolean isR4Abnormal(LightingCircuit circuit) {
-        Double current = circuit.getElectricCurrent();
-        Double rated = circuit.getRatedElectricCurrent();
-        if (current == null || rated == null || rated <= 0) {
-            // 额定电流为空/非法时不参与过载判定
-            return false;
+    private static final class RuleMeta {
+        String name;
+        String level;
+        RuleMeta(String code) {
+            this.name = code;
+            this.level = "alarm";
         }
-        return current > rated;
+        RuleMeta(String name, String level) {
+            this.name = name;
+            this.level = level;
+        }
     }
 
     /**
-     * R2 异常判定：status=关闭 且 残留电流 > 0.2A（触点粘连/漏电，关不断）
+     * 整箱通信中断判定：某区域有回路，且该区域所有回路 comstat=离线 → 视为箱级通信中断。
      */
-    private boolean isR2Abnormal(LightingCircuit circuit) {
-        Double current = circuit.getElectricCurrent();
-        return current != null && current > R2_STUCK_CURRENT;
+    private Set<Long> computeCommDownAreas(List<LightingCircuit> circuits) {
+        if (CollectionUtil.isEmpty(circuits)) {
+            return java.util.Collections.emptySet();
+        }
+        Map<Long, List<LightingCircuit>> byArea = circuits.stream()
+                .filter(c -> c.getAreaId() != null)
+                .collect(Collectors.groupingBy(LightingCircuit::getAreaId));
+        Set<Long> result = new HashSet<>();
+        for (Map.Entry<Long, List<LightingCircuit>> e : byArea.entrySet()) {
+            List<LightingCircuit> list = e.getValue();
+            if (list.isEmpty()) {
+                continue;
+            }
+            boolean allOffline = list.stream()
+                    .allMatch(c -> LightingCircuit.COMSTAT_OFFLINE.equals(c.getComstat()));
+            if (allOffline) {
+                result.add(e.getKey());
+            }
+        }
+        return result;
     }
 
-    private String buildR1Detail(LightingCircuit circuit) {
-        return String.format(
-                "开启状态但电流 %.2f A 低于开路阈值 %.2f A(接近零)，持续约 3 分钟，疑似开路/灯具失效（R1）",
-                circuit.getElectricCurrent() == null ? 0d : circuit.getElectricCurrent(),
-                R1_OPEN_CURRENT);
-    }
-
-    private String buildR2Detail(LightingCircuit circuit) {
-        return String.format(
-                "关闭状态但残留电流 %.2f A 超过阈值 %.2f A，持续约 3 分钟，疑似触点粘连/漏电（R2）",
-                circuit.getElectricCurrent() == null ? 0d : circuit.getElectricCurrent(),
-                R2_STUCK_CURRENT);
-    }
-
-    private String buildR4Detail(LightingCircuit circuit) {
-        return String.format(
-                "开启状态但电流 %.2f A 超过额定电流 %.2f A，持续约 3 分钟，疑似过载（R4）",
-                circuit.getElectricCurrent() == null ? 0d : circuit.getElectricCurrent(),
-                circuit.getRatedElectricCurrent() == null ? 0d : circuit.getRatedElectricCurrent());
-    }
-
-    /**
-     * 加载各区域的箱级三相电压快照：areaId -> 箱子遥测
-     */
     private Map<Long, LightingBoxTelemetry> loadBoxVoltageMap(Set<Long> areaIds) {
         if (CollectionUtil.isEmpty(areaIds)) {
-            return Collections.emptyMap();
+            return java.util.Collections.emptyMap();
         }
         List<LightingBoxTelemetry> boxes = boxTelemetryService.list(
                 new LambdaQueryWrapper<LightingBoxTelemetry>().in(LightingBoxTelemetry::getAreaId, areaIds));
         if (CollectionUtil.isEmpty(boxes)) {
-            return Collections.emptyMap();
+            return java.util.Collections.emptyMap();
         }
         return boxes.stream().collect(Collectors.toMap(LightingBoxTelemetry::getAreaId,
-                b -> b, (a, b) -> a));
+                Function.identity(), (a, b) -> a));
     }
 
-    /**
-     * 箱级三相电压是否正常（上级供电正常）：A/B/C 三相均有值且落在有效带内。
-     * 任一相为 null/缺相(0或过低)/过高 都视为箱级供电异常。
-     */
-    private boolean isBoxVoltageOk(LightingBoxTelemetry box) {
+    private boolean isPowerNormal(LightingBoxTelemetry box) {
+        return box != null && allInVoltageBand(box, VOLTAGE_LOW, VOLTAGE_HIGH);
+    }
+
+    private boolean allInVoltageBand(LightingBoxTelemetry box, double lo, double hi) {
         if (box == null) {
             return false;
         }
-        return inVoltageBand(box.getVoltageA())
-                && inVoltageBand(box.getVoltageB())
-                && inVoltageBand(box.getVoltageC());
+        return inBand(box.getVoltageA(), lo, hi)
+                && inBand(box.getVoltageB(), lo, hi)
+                && inBand(box.getVoltageC(), lo, hi);
     }
 
-    private boolean inVoltageBand(Double v) {
-        return v != null && v >= VOLTAGE_LOW && v <= VOLTAGE_HIGH;
+    private boolean inBand(Double v, double lo, double hi) {
+        return v != null && v >= lo && v <= hi;
     }
 
-    private boolean isAlarm(LightingCircuit circuit) {
-        return "报警".equals(circuit.getAlarmFlag());
+    private String keyOf(Long circuitId, String ruleCode) {
+        return circuitId + ":" + ruleCode;
     }
 
-    private void markAlarm(LightingCircuit circuit, LightingArea area, LocalDateTime now,
-                           String ruleCode, String ruleName, String alarmDetail) {
-        LightingCircuit update = new LightingCircuit();
-        update.setId(circuit.getId());
-        update.setAlarmFlag("报警");
-        update.setAlarmRuleCode(ruleCode);
-        update.setAlarmRuleName(ruleName);
-        update.setAlarmTime(now);
-        update.setAlarmDetail(alarmDetail);
-        circuitService.updateById(update);
-        log.warn("【诊断】回路标记报警：circuitId={}, code={}, name={}, 规则={}({}), 电流={}A",
-                circuit.getId(), circuit.getCircuitCode(), circuit.getCircuitName(),
-                ruleCode, ruleName, circuit.getElectricCurrent());
-
-        // 写入报警历史流水（一次报警生命周期开始）
-        LightingCircuitAlarmLog alarmLog = new LightingCircuitAlarmLog();
-        alarmLog.setCircuitId(circuit.getId());
-        alarmLog.setCircuitCode(circuit.getCircuitCode());
-        alarmLog.setCircuitName(circuit.getCircuitName());
-        alarmLog.setAreaId(circuit.getAreaId());
-        alarmLog.setAreaName(area != null ? area.getAreaName() : null);
-        alarmLog.setSpace(area != null ? area.getSpace() : SPACE_BQ);
-        alarmLog.setRuleCode(ruleCode);
-        alarmLog.setRuleName(ruleName);
-        alarmLog.setStatus("报警中");
-        alarmLog.setAlarmTime(now);
-        alarmLog.setElectricCurrent(toBigDecimal(circuit.getElectricCurrent()));
-        alarmLog.setRatedElectricCurrent(toBigDecimal(circuit.getRatedElectricCurrent()));
-        alarmLog.setDetail(alarmDetail);
-        alarmLogService.logAlarm(alarmLog);
+    private boolean hasActiveLog(Long circuitId, String ruleCode) {
+        return !alarmLogService.listActiveByCircuit(circuitId, ruleCode).isEmpty();
     }
 
-    private void clearAlarm(LightingCircuit circuit, LocalDateTime now) {
-        LightingCircuit update = new LightingCircuit();
-        update.setId(circuit.getId());
-        update.setAlarmFlag("正常");
-        update.setAlarmRuleCode(null);
-        update.setAlarmRuleName(null);
-        update.setAlarmTime(null);
-        update.setAlarmDetail(null);
-        circuitService.updateById(update);
-        log.info("【诊断】回路恢复正常：circuitId={}, code={}", circuit.getId(), circuit.getCircuitCode());
-
-        // 关闭最近一条"报警中"流水：回填恢复时间并置为已恢复
-        alarmLogService.recoverAlarm(circuit.getId(), now);
+    private void writeLogStart(LightingCircuitAlarm a) {
+        LightingCircuitAlarmLog logRow = new LightingCircuitAlarmLog();
+        logRow.setCircuitId(a.getCircuitId());
+        logRow.setCircuitCode(a.getCircuitCode());
+        logRow.setCircuitName(a.getCircuitName());
+        logRow.setAreaId(a.getAreaId());
+        logRow.setAreaName(a.getAreaName());
+        logRow.setSpace(a.getSpace());
+        logRow.setRuleCode(a.getRuleCode());
+        logRow.setRuleName(a.getRuleName());
+        logRow.setStatus("报警中");
+        logRow.setAlarmTime(a.getAlarmTime());
+        alarmLogService.logAlarm(logRow);
     }
 
-    private java.math.BigDecimal toBigDecimal(Double v) {
-        return v == null ? null : java.math.BigDecimal.valueOf(v);
-    }
-
-    private void pruneCounters(Set<Long> scannedIds) {
-        r1Hit.keySet().removeIf(id -> !scannedIds.contains(id));
-        r1Recover.keySet().removeIf(id -> !scannedIds.contains(id));
-        r2Hit.keySet().removeIf(id -> !scannedIds.contains(id));
-        r2Recover.keySet().removeIf(id -> !scannedIds.contains(id));
-        r4Hit.keySet().removeIf(id -> !scannedIds.contains(id));
-        r4Recover.keySet().removeIf(id -> !scannedIds.contains(id));
-    }
-
-    private void clearCounters() {
-        r1Hit.clear();
-        r1Recover.clear();
-        r2Hit.clear();
-        r2Recover.clear();
-        r4Hit.clear();
-        r4Recover.clear();
+    private void clearAll() {
+        hitBuf.clear();
+        prevFinalKeys.clear();
     }
 }

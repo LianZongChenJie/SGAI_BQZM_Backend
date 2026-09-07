@@ -116,36 +116,10 @@ public class LightingCircuit {
     private String comstat;
 
     /**
-     * 是否报警（报警/正常）
+     * 是否报警（报警/正常）——仅作简单冗余，当前命中明细以 lighting_circuit_alarm 为准
      */
     @ApiModelProperty(value = "是否报警（报警/正常）")
     private String alarmFlag;
-
-    /**
-     * 报警命中的规则编码（R1/R2/R3/R4/R5C/R5M）
-     */
-    @ApiModelProperty(value = "报警命中的规则编码")
-    private String alarmRuleCode;
-
-    /**
-     * 报警命中的规则名称（如 开路·灯具失效）
-     */
-    @ApiModelProperty(value = "报警命中的规则名称")
-    private String alarmRuleName;
-
-    /**
-     * 报警发生时间
-     */
-    @JsonFormat(pattern = "yyyy-MM-dd HH:mm:ss")
-    @DateTimeFormat(pattern = "yyyy-MM-dd HH:mm:ss")
-    @ApiModelProperty(value = "报警发生时间")
-    private LocalDateTime alarmTime;
-
-    /**
-     * 报警详情/判定依据
-     */
-    @ApiModelProperty(value = "报警详情")
-    private String alarmDetail;
 
     /**
      * 空间名称

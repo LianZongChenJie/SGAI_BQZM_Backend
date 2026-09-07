@@ -35,13 +35,14 @@ public class LightingCircuitAlarmLogServiceImpl
     }
 
     @Override
-    public boolean recoverAlarm(Long circuitId, LocalDateTime recoverTime) {
-        if (circuitId == null) {
+    public boolean recoverAlarm(Long circuitId, String ruleCode, LocalDateTime recoverTime) {
+        if (circuitId == null || ruleCode == null) {
             return false;
         }
-        // 取该回路最近一条"报警中"流水
+        // 取该 回路+规则 最近一条"报警中"流水
         List<LightingCircuitAlarmLog> active = list(new LambdaQueryWrapper<LightingCircuitAlarmLog>()
                 .eq(LightingCircuitAlarmLog::getCircuitId, circuitId)
+                .eq(LightingCircuitAlarmLog::getRuleCode, ruleCode)
                 .eq(LightingCircuitAlarmLog::getStatus, STATUS_ACTIVE)
                 .orderByDesc(LightingCircuitAlarmLog::getId)
                 .last("LIMIT 1"));
@@ -72,9 +73,10 @@ public class LightingCircuitAlarmLogServiceImpl
     }
 
     @Override
-    public List<LightingCircuitAlarmLog> listActiveByCircuit(Long circuitId) {
+    public List<LightingCircuitAlarmLog> listActiveByCircuit(Long circuitId, String ruleCode) {
         return list(new LambdaQueryWrapper<LightingCircuitAlarmLog>()
                 .eq(LightingCircuitAlarmLog::getCircuitId, circuitId)
+                .eq(ruleCode != null, LightingCircuitAlarmLog::getRuleCode, ruleCode)
                 .eq(LightingCircuitAlarmLog::getStatus, STATUS_ACTIVE)
                 .orderByDesc(LightingCircuitAlarmLog::getId)
                 .last("LIMIT 1"));

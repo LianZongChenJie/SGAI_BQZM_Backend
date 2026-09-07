@@ -15,11 +15,11 @@ public interface ILightingCircuitAlarmLogService extends IService<LightingCircui
     void logAlarm(LightingCircuitAlarmLog log);
 
     /**
-     * 恢复指定回路的最近一条"报警中"流水（置为已恢复并回填恢复时间）
+     * 恢复指定 回路+规则 的最近一条"报警中"流水（置为已恢复并回填恢复时间）
      *
      * @return 是否成功回填
      */
-    boolean recoverAlarm(Long circuitId, LocalDateTime recoverTime);
+    boolean recoverAlarm(Long circuitId, String ruleCode, LocalDateTime recoverTime);
 
     /**
      * 分页查询历史报警流水（可按 回路/区域/规则/状态/时间范围 过滤）
@@ -29,7 +29,7 @@ public interface ILightingCircuitAlarmLogService extends IService<LightingCircui
                                             String status, LocalDateTime startTime, LocalDateTime endTime);
 
     /**
-     * 查询指定回路最近一条"报警中"流水（用于恢复回填）
+     * 查询指定 回路+规则 最近一条"报警中"流水（用于恢复回填）
      */
-    List<LightingCircuitAlarmLog> listActiveByCircuit(Long circuitId);
+    List<LightingCircuitAlarmLog> listActiveByCircuit(Long circuitId, String ruleCode);
 }
