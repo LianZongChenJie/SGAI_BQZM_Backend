@@ -33,9 +33,6 @@ import java.util.stream.Collectors;
 @AllArgsConstructor
 public class LightingDiagRuleController {
 
-    /** 北区公区空间编码 */
-    private static final String SPACE_BQ = "903";
-
     private final ILightingDiagRuleService diagRuleService;
 
     private final ILightingCircuitService circuitService;
@@ -58,25 +55,23 @@ public class LightingDiagRuleController {
         return Result.ok(domains);
     }
 
-    @ApiOperation("查询 903 空间报警回路列表（含区域/电流/额定电流/命中规则）")
+    @ApiOperation("查询报警回路列表（全空间；含区域/电流/额定电流/命中规则）")
     @GetMapping("/alarmCircuits")
     public Result<List<LightingCircuit>> alarmCircuits() {
-        // 先取 903 空间下的区域集合
-        List<LightingArea> areas = areaService.list(new LambdaQueryWrapper<LightingArea>()
-                .eq(LightingArea::getSpace, SPACE_BQ));
-        if (areas == null || areas.isEmpty()) {
+        // 全空间所有被标记为报警的回路
+        List<LightingCircuit> circuits = circuitService.list(new LambdaQueryWrapper<LightingCircuit>()
+                .eq(LightingCircuit::getAlarmFlag, "报警"));
+        if (circuits == null || circuits.isEmpty()) {
             return Result.ok(java.util.Collections.emptyList());
         }
-        Set<Long> areaIds = areas.stream().map(LightingArea::getId).collect(Collectors.toSet());
-        // 查询这些区域下被标记为报警的回路
-        List<LightingCircuit> circuits = circuitService.list(new LambdaQueryWrapper<LightingCircuit>()
-                .in(LightingCircuit::getAreaId, areaIds)
-                .eq(LightingCircuit::getAlarmFlag, "报警"));
-        if (circuits.isEmpty()) {
-            return Result.ok(circuits);
-        }
-        // 回填区域名称/空间名称
-        Map<Long, LightingArea> areaMap = areas.stream()
+        // 回填区域名称/空间名称（用到的区域一次性查）
+        Set<Long> needAreaIds = circuits.stream()
+                .map(LightingCircuit::getAreaId)
+                .collect(Collectors.toSet());
+        List<LightingArea> areas = areaService.list(new LambdaQueryWrapper<LightingArea>()
+                .in(LightingArea::getId, needAreaIds));
+        Map<Long, LightingArea> areaMap = (areas == null ? java.util.Collections.<LightingArea>emptyList() : areas)
+                .stream()
                 .collect(Collectors.toMap(LightingArea::getId, Function.identity()));
         for (LightingCircuit circuit : circuits) {
             LightingArea area = areaMap.get(circuit.getAreaId());
@@ -88,18 +83,37 @@ public class LightingDiagRuleController {
         return Result.ok(circuits);
     }
 
-    @ApiOperation("903 空间报警数量统计")
+    @ApiOperation("报警回路总数（全空间）")
     @GetMapping("/alarmCount")
     public Result<Long> alarmCount() {
-        List<LightingArea> areas = areaService.list(new LambdaQueryWrapper<LightingArea>()
-                .eq(LightingArea::getSpace, SPACE_BQ));
-        if (areas == null || areas.isEmpty()) {
-            return Result.ok(0L);
-        }
-        Set<Long> areaIds = areas.stream().map(LightingArea::getId).collect(Collectors.toSet());
         Long count = circuitService.count(new LambdaQueryWrapper<LightingCircuit>()
-                .in(LightingCircuit::getAreaId, areaIds)
                 .eq(LightingCircuit::getAlarmFlag, "报警"));
         return Result.ok(count);
+    }
+
+    @ApiOperation("各规则命中回路数（全空间；规则库页右侧红点；含 0 命中规则）")
+    @GetMapping("/alarmCountByRule")
+    public Result<List<Map<String, Object>>> alarmCountByRule() {
+        // 以启用规则为准，保证所有规则(含未命中=0)都返回，前端每条规则右侧都能显示
+        List<LightingDiagRule> rules = diagRuleService.listEnabled(null);
+        List<Map<String, Object>> result = new java.util.ArrayList<>();
+        if (rules == null || rules.isEmpty()) {
+            return Result.ok(result);
+        }
+        // 全空间所有报警回路，按 alarm_rule_code 分组统计；命中规则为空(null)不计
+        List<LightingCircuit> alarmCircuits = circuitService.list(new LambdaQueryWrapper<LightingCircuit>()
+                .eq(LightingCircuit::getAlarmFlag, "报警"));
+        Map<String, Long> countByRule = alarmCircuits.stream()
+                .filter(c -> c.getAlarmRuleCode() != null)
+                .collect(Collectors.groupingBy(LightingCircuit::getAlarmRuleCode, Collectors.counting()));
+        for (LightingDiagRule rule : rules) {
+            Map<String, Object> item = new java.util.HashMap<>();
+            item.put("ruleCode", rule.getRuleCode());
+            item.put("ruleName", rule.getName());
+            item.put("ruleDomain", rule.getRuleDomain());
+            item.put("count", countByRule.getOrDefault(rule.getRuleCode(), 0L));
+            result.add(item);
+        }
+        return Result.ok(result);
     }
 }
