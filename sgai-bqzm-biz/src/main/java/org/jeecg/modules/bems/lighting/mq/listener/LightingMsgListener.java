@@ -287,7 +287,7 @@ public class LightingMsgListener {
     public void hg1StatusListener(Message message) {
         String body = new String(message.getBody());
         try {
-            log.info("【1号馆】收到状态消息：{}", body);
+//            log.info("【1号馆】收到状态消息：{}", body);
             JSONObject msg = JSONObject.parseObject(body);
 
             String gatewayAdr = msg.getString("GatewayAdr");
@@ -406,7 +406,7 @@ public class LightingMsgListener {
     public void bqStatusListener(Message message) {
         String body = new String(message.getBody());
         try {
-            log.info("【公区】收到状态消息：{}", body);
+//            log.info("【公区】收到状态消息：{}", body);
             // 新消息格式为数组：[{"DataType":"1","CircuitCode":"1","Value":"0","GatewayCode":"15"}, ...]，兼容单对象老消息
             List<JSONObject> msgList = new java.util.ArrayList<>();
             String trimmed = body.trim();
@@ -800,7 +800,7 @@ public class LightingMsgListener {
 
         // 注：在线/离线状态已改由 DataType=4 整体推送，不再发延迟离线判定消息
 
-        log.info("【公区904】回路状态更新完成：areaId={}, circuitCode={}, status={}", areaIdStr, circuitCode, status);
+//        log.info("【公区904】回路状态更新完成：areaId={}, circuitCode={}, status={}", areaIdStr, circuitCode, status);
     }
 
     /**
@@ -860,8 +860,8 @@ public class LightingMsgListener {
         // 更新回路状态（同时维护开启/关闭时间、开启总时长、通讯状态）
         circuitService.applyStatus(circuit, status);
 
-        log.info("【公区905】回路状态更新完成：AreaID={}, circuit_code={}, areaName={}, status={}, comstat={}",
-                areaIdStr, circuit.getCircuitCode(), area != null ? area.getAreaName() : null, status, circuit.getComstat());
+//        log.info("【公区905】回路状态更新完成：AreaID={}, circuit_code={}, areaName={}, status={}, comstat={}",
+//                areaIdStr, circuit.getCircuitCode(), area != null ? area.getAreaName() : null, status, circuit.getComstat());
     }
 
     /**
@@ -920,8 +920,8 @@ public class LightingMsgListener {
         // 更新回路状态（同时维护开启/关闭时间、开启总时长、通讯状态）
         circuitService.applyStatus(circuit, status);
 
-        log.info("【公区906】回路状态更新完成：AreaID={}, circuit_code={}, areaName={}, status={}, comstat={}",
-                areaIdStr, circuit.getCircuitCode(), area != null ? area.getAreaName() : null, status, circuit.getComstat());
+//        log.info("【公区906】回路状态更新完成：AreaID={}, circuit_code={}, areaName={}, status={}, comstat={}",
+//                areaIdStr, circuit.getCircuitCode(), area != null ? area.getAreaName() : null, status, circuit.getComstat());
     }
 
     /**
@@ -930,7 +930,7 @@ public class LightingMsgListener {
      * value：1=开，12=关；只更新区域自身状态（lighting_area.status），回路状态仍由各自的回路状态消息更新
      */
     private void handleBqAreaStatus(JSONObject msg) {
-        log.info("【公区904】收到状态消息：{}", msg.toJSONString(msg));
+//        log.info("【公区904】收到状态消息：{}", msg.toJSONString(msg));
         String gatewayCode = msg.getString("GatewayCode");
         String areaIdStr = msg.getString("AreaID");
         String value = msg.getString("Value");
