@@ -522,6 +522,7 @@ public class LightingPlanServiceImpl extends ServiceImpl<LightingPlanMapper, Lig
         dto.setRelType(plan.getRelType());
         dto.setOperationType(plan.getOperationType());
         dto.setStatus(plan.getStatus());
+        dto.setVerifyAfterExecute(plan.getVerifyAfterExecute());
         dto.setExecutionTime(plan.getExecutionTime());
 
         if (executionTime != null) {

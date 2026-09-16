@@ -41,6 +41,9 @@ public class DmSqlRunner {
     // 51 服务器库
     private static final String URL_51 =
             "jdbc:dm://192.168.204.51:5238?schema=BQZM&compatibleMode=mysql&ignoreCase=true&ENCODING=utf-8";
+    // 109 服务器库（现业务库，51 已迁移/不可达）
+    private static final String URL_109 =
+            "jdbc:dm://192.168.204.109:5238?schema=BQZM&compatibleMode=mysql&ignoreCase=true&ENCODING=utf-8";
     private static final String USER = "SYSDBA";
     private static final String PASSWORD = "Liming@2026";
     // ================================================
@@ -82,6 +85,9 @@ public class DmSqlRunner {
     private static String resolveUrl(String targetDb) {
         if ("51".equalsIgnoreCase(targetDb)) {
             return URL_51;
+        }
+        if ("109".equalsIgnoreCase(targetDb)) {
+            return URL_109;
         }
         return URL_LOCAL;
     }

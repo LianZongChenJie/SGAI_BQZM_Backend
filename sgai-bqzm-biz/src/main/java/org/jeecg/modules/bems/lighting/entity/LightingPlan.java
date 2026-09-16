@@ -116,6 +116,14 @@ public class LightingPlan extends BaseEntity {
     private Long districtId;
 
     /**
+     * 是否持续验证：0-否 1-是。
+     * 开启后：计划定时执行成功后，延迟 N 分钟（N 取业务配置 plan:verify:delay:minutes）
+     * 复查计划目标的灯实际状态，未达成的重新下发对应开关指令（只补发一次）。
+     */
+    @ApiModelProperty(value = "是否持续验证：0-否 1-是")
+    private Integer verifyAfterExecute;
+
+    /**
      * 计划执行信息
      */
     @TableField(exist = false)

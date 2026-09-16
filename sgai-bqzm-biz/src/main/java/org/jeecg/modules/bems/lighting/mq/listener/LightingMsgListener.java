@@ -42,6 +42,8 @@ public class LightingMsgListener {
 
     private final ILightingPlanExecuteLogService planExecuteLogService;
 
+    private final ILightingPlanVerifyService planVerifyService;
+
     private final ILightingEnergyReadService energyReadService;
 
     private final ILightingBoxTelemetryService boxTelemetryService;
@@ -115,6 +117,10 @@ public class LightingMsgListener {
             boolean success = planService.execution(planId, version);
             planExecuteLogService.markConsumed(planId, version, executeDate, success,
                     success ? null : "计划执行失败（计划停用/版本不匹配/时间偏差超限等）");
+            // 定时执行成功后登记"持续验证"（仅勾选了持续验证的计划生效；手动"立即执行"不登记，避免污染日历状态）
+            if (success) {
+                planVerifyService.registerVerify(planId, version, executeDate);
+            }
         } catch (Exception e) {
             log.error("mq消息消费失败。queue:{}，message:{}", LightingMqConstant.QUEUE_LIGHTING_PLAN, body, e);
             // 消费异常：记录执行失败，供日历展示

@@ -24,6 +24,15 @@ public class LightingPlanExecuteLog {
     /** 状态：执行失败（MQ 消息消费异常 / 计划执行失败） */
     public static final String STATUS_FAIL = "执行失败";
 
+    /** 持续验证状态：无需（计划未开启持续验证） */
+    public static final String VERIFY_NONE = "无需";
+    /** 持续验证状态：待验证（已登记，等待到期执行复查） */
+    public static final String VERIFY_PENDING = "待验证";
+    /** 持续验证状态：已完成（已复查并按需补发） */
+    public static final String VERIFY_DONE = "已完成";
+    /** 持续验证状态：已跳过（计划不存在等异常，未执行复查） */
+    public static final String VERIFY_SKIPPED = "已跳过";
+
     /** 主键 */
     @TableId(type = IdType.AUTO)
     private Long id;
@@ -58,6 +67,17 @@ public class LightingPlanExecuteLog {
 
     /** 备注（失败原因等） */
     private String remark;
+
+    /** 持续验证状态：无需/待验证/已完成/已跳过 */
+    private String verifyStatus;
+
+    /** 验证执行时刻（计划执行时刻 + 延迟分钟） */
+    @JsonFormat(timezone = "GMT+8", pattern = "yyyy-MM-dd HH:mm:ss")
+    @DateTimeFormat(pattern = "yyyy-MM-dd HH:mm:ss")
+    private Date verifyTime;
+
+    /** 验证/补发结果详情（复查回路数、补发的回路、跳过的目标等） */
+    private String verifyResult;
 
     /** 创建人 */
     private String createBy;

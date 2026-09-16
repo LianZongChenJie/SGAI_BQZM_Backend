@@ -39,6 +39,11 @@ public class LightingPlanDetailDto {
      */
     private String status;
 
+    /**
+     * 是否持续验证：0-否 1-是（定时执行成功后延迟N分钟复查灯状态，未达成的补下发）
+     */
+    private Integer verifyAfterExecute;
+
     // ========== 执行时间配置 ==========
     /**
      * 执行时间 HH:mm:ss
