@@ -48,8 +48,11 @@ import java.util.Collections;
 import java.util.Comparator;
 import java.util.Date;
 import java.util.HashSet;
+import java.util.LinkedHashMap;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
+import java.util.Objects;
 import java.util.Set;
 import java.util.function.Function;
 import java.util.stream.Collectors;
@@ -78,6 +81,11 @@ public class LightingSceneServiceImpl extends ServiceImpl<LightingSceneMapper, L
 
     private final ILightingProgramService lightingProgramService;
     private final IBusinessConfigService businessConfigService;
+
+    /**
+     * 配置操作日志（新增/修改/删除场景时留痕）
+     */
+    private final ILightingConfigLogService lightingConfigLogService;
 
     @Override
     public IPage<LightingPlan> listPage(LightingSceneQueryDto params) {
@@ -425,6 +433,9 @@ public class LightingSceneServiceImpl extends ServiceImpl<LightingSceneMapper, L
         scene.setProgramSceneIds(dto.getProgramSceneIds());
         super.save(scene);
         saveDetails(scene.getId(), dto.getDetails());
+        // 配置操作日志
+        lightingConfigLogService.saveLog("新增", "场景配置", "场景", scene.getId(), scene.getSceneName(),
+                "新增场景；控制目标：" + describeDetails(dto.getDetails()));
     }
 
     @Override
@@ -437,6 +448,9 @@ public class LightingSceneServiceImpl extends ServiceImpl<LightingSceneMapper, L
         if (old == null) {
             throw new JeecgBootException("场景不存在");
         }
+        // 记录修改前的明细（明细为先删后插，需先取旧值用于对比"改了哪些控制目标"）
+        List<LightingSceneDetail> oldDetails = detailMapper.selectList(
+                new LambdaQueryWrapper<LightingSceneDetail>().eq(LightingSceneDetail::getSceneId, dto.getId()));
         convertParams(dto);
         validate(dto);
         LightingScene scene = new LightingScene();
@@ -453,6 +467,9 @@ public class LightingSceneServiceImpl extends ServiceImpl<LightingSceneMapper, L
         // 先删后插明细
         detailMapper.delete(new LambdaQueryWrapper<LightingSceneDetail>().eq(LightingSceneDetail::getSceneId, dto.getId()));
         saveDetails(dto.getId(), dto.getDetails());
+        // 配置操作日志（记录"旧值 → 新值"，含明细增删与动作变化）
+        lightingConfigLogService.saveLog("修改", "场景配置", "场景", dto.getId(), scene.getSceneName(),
+                buildSceneDiff(old, oldDetails, scene, dto.getDetails()));
     }
 
     @Override
@@ -467,8 +484,14 @@ public class LightingSceneServiceImpl extends ServiceImpl<LightingSceneMapper, L
                 || LightingScene.CATEGORY_PROGRAM.equals(scene.getCategory())) {
             throw new JeecgBootException("【" + scene.getCategory() + "】类别的场景不允许删除");
         }
+        // 记录被删除的控制目标（删除后明细一并移除，无法再查）
+        List<LightingSceneDetail> details = detailMapper.selectList(
+                new LambdaQueryWrapper<LightingSceneDetail>().eq(LightingSceneDetail::getSceneId, id));
         detailMapper.delete(new LambdaQueryWrapper<LightingSceneDetail>().eq(LightingSceneDetail::getSceneId, id));
         super.removeById(id);
+        // 配置操作日志
+        lightingConfigLogService.saveLog("删除", "场景配置", "场景", id, scene.getSceneName(),
+                "删除场景；原控制目标：" + describeDetails(details));
     }
 
     /**
@@ -931,6 +954,125 @@ public class LightingSceneServiceImpl extends ServiceImpl<LightingSceneMapper, L
         Page<LightingScene> page = super.page(new Page<>(1, 1, false),
                 new LambdaQueryWrapper<LightingScene>().orderByDesc(LightingScene::getSort));
         return CollectionUtil.isNotEmpty(page.getRecords()) ? page.getRecords().get(0).getSort() : 0;
+    }
+
+    // ==================== 配置操作日志：内容拼装 ====================
+
+    /**
+     * 拼接场景修改内容（旧值 → 新值），如：
+     * 名称：A → B；标签：服贸会 → 领导参观；新增目标：区域：3号馆2F；移除目标：回路：BQ-12-03
+     */
+    private String buildSceneDiff(LightingScene old, List<LightingSceneDetail> oldDetails,
+                                  LightingScene now, List<LightingSceneDetail> newDetails) {
+        List<String> changes = new ArrayList<>();
+        appendChange(changes, "名称", old.getSceneName(), now.getSceneName());
+        appendChange(changes, "场景类型", old.getSceneType(), now.getSceneType());
+        appendChange(changes, "类别", old.getCategory(), now.getCategory());
+        appendChange(changes, "标签", old.getTagName(), now.getTagName());
+        appendChange(changes, "关联节目", old.getProgramSceneIds(), now.getProgramSceneIds());
+        appendChange(changes, "备注", old.getRemark(), now.getRemark());
+        appendDetailDiff(changes, oldDetails, newDetails);
+        return changes.isEmpty() ? "无字段变更" : String.join("；", changes);
+    }
+
+    /**
+     * 单字段差异：仅当新值非空且与旧值不同才记录
+     * （编辑走 updateById，未传的字段不会变更，避免误报为"清空"）
+     */
+    private void appendChange(List<String> changes, String label, String before, String after) {
+        if (StringUtils.isEmpty(after) || Objects.equals(before, after)) {
+            return;
+        }
+        changes.add(label + "：" + (StringUtils.isEmpty(before) ? "空" : before) + " → " + after);
+    }
+
+    /**
+     * 明细差异：新增目标、移除目标、同一目标的开/关动作变化
+     */
+    private void appendDetailDiff(List<String> changes, List<LightingSceneDetail> oldDetails,
+                                  List<LightingSceneDetail> newDetails) {
+        Map<String, LightingSceneDetail> oldMap = indexDetails(oldDetails);
+        Map<String, LightingSceneDetail> newMap = indexDetails(newDetails);
+
+        List<String> removed = oldMap.entrySet().stream()
+                .filter(e -> !newMap.containsKey(e.getKey()))
+                .map(e -> describeDetail(e.getValue()))
+                .collect(Collectors.toList());
+        if (!removed.isEmpty()) {
+            changes.add("移除目标：" + String.join("、", removed));
+        }
+
+        List<String> added = newMap.entrySet().stream()
+                .filter(e -> !oldMap.containsKey(e.getKey()))
+                .map(e -> describeDetail(e.getValue()))
+                .collect(Collectors.toList());
+        if (!added.isEmpty()) {
+            changes.add("新增目标：" + String.join("、", added));
+        }
+
+        List<String> opChanged = new ArrayList<>();
+        newMap.forEach((key, now) -> {
+            LightingSceneDetail before = oldMap.get(key);
+            if (before != null && !Objects.equals(before.getOperationType(), now.getOperationType())) {
+                opChanged.add(describeDetail(now) + "：" + nullToEmpty(before.getOperationType())
+                        + " → " + nullToEmpty(now.getOperationType()));
+            }
+        });
+        if (!opChanged.isEmpty()) {
+            changes.add("动作变化：" + String.join("、", opChanged));
+        }
+    }
+
+    /**
+     * 明细按 关联类型 + 关联ID 建索引
+     */
+    private Map<String, LightingSceneDetail> indexDetails(List<LightingSceneDetail> details) {
+        Map<String, LightingSceneDetail> map = new LinkedHashMap<>();
+        if (CollectionUtil.isEmpty(details)) {
+            return map;
+        }
+        for (LightingSceneDetail detail : details) {
+            map.put(nullToEmpty(detail.getRelType()) + "#" + detail.getRelId(), detail);
+        }
+        return map;
+    }
+
+    /**
+     * 明细展示文本：区域：3号馆1F（无名称时退化为ID）
+     */
+    private String describeDetail(LightingSceneDetail detail) {
+        String name = StringUtils.isEmpty(detail.getRelName())
+                ? String.valueOf(detail.getRelId()) : detail.getRelName();
+        return StringUtils.isEmpty(detail.getRelType()) ? name : detail.getRelType() + " " + name;
+    }
+
+    /**
+     * 控制目标描述，如：区域：3号馆1F、3号馆2F（开启）；回路：BQ-12-03（关闭）
+     */
+    private String describeDetails(List<LightingSceneDetail> details) {
+        if (CollectionUtil.isEmpty(details)) {
+            return "无控制目标";
+        }
+        Map<String, List<LightingSceneDetail>> grouped = new LinkedHashMap<>();
+        for (LightingSceneDetail detail : details) {
+            grouped.computeIfAbsent(nullToEmpty(detail.getRelType()), k -> new ArrayList<>()).add(detail);
+        }
+        List<String> parts = new ArrayList<>();
+        grouped.forEach((relType, list) -> {
+            Set<String> names = list.stream()
+                    .map(d -> StringUtils.isEmpty(d.getRelName()) ? String.valueOf(d.getRelId()) : d.getRelName())
+                    .collect(Collectors.toCollection(LinkedHashSet::new));
+            Set<String> operations = list.stream()
+                    .map(d -> nullToEmpty(d.getOperationType()))
+                    .collect(Collectors.toCollection(LinkedHashSet::new));
+            String opText = operations.isEmpty() ? "" : "（" + String.join("/", operations) + "）";
+            parts.add((StringUtils.isEmpty(relType) ? "目标" : relType) + "：" + String.join("、", names) + opText);
+        });
+        return String.join("；", parts);
+    }
+
+    private String nullToEmpty(String value) {
+        return value == null ? "" : value;
     }
 
     /**

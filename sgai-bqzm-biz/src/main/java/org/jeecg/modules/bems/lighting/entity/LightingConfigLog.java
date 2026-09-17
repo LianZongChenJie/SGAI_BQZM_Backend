@@ -4,6 +4,8 @@ import com.baomidou.mybatisplus.annotation.IdType;
 import com.baomidou.mybatisplus.annotation.TableId;
 import com.baomidou.mybatisplus.annotation.TableName;
 import com.fasterxml.jackson.annotation.JsonFormat;
+import com.fasterxml.jackson.databind.annotation.JsonSerialize;
+import com.fasterxml.jackson.databind.ser.std.ToStringSerializer;
 import io.swagger.annotations.ApiModel;
 import io.swagger.annotations.ApiModelProperty;
 import lombok.Data;
@@ -20,9 +22,10 @@ import java.time.LocalDateTime;
 public class LightingConfigLog {
 
     /**
-     * 主键
+     * 主键（雪花ID。本表 id 无自增属性，不能用 IdType.AUTO，否则 insert 报"违反列[id]非空约束"）
      */
-    @TableId(type = IdType.AUTO)
+    @TableId(type = IdType.ASSIGN_ID)
+    @JsonSerialize(using = ToStringSerializer.class)
     @ApiModelProperty(value = "主键ID")
     private Long id;
 
