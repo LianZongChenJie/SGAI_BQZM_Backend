@@ -251,7 +251,8 @@ public class LightingHomeServiceImpl implements ILightingHomeService {
 
     /**
      * 判断当前登录用户是否拥有 bqzm 角色
-     * 通过 Shiro 获取当前用户，判断其角色编码是否包含 bqzm
+     * 通过 Shiro 获取当前用户，判断其角色编码是否命中配置。
+     * 配置 role:bqzm 支持配置多个角色编码，英文逗号分隔（如 "bqzm,admin"），命中任意一个即视为 bqzm 角色。
      */
     private boolean isBqzmRole() {
         try {
@@ -264,11 +265,20 @@ public class LightingHomeServiceImpl implements ILightingHomeService {
             if (StringUtils.isEmpty(roleCodeStr)) {
                 return false;
             }
+            String configuredRoles = businessConfigService.getValueByKey(BusinessConfigConstant.ROLE_BQZM);
+            if (StringUtils.isEmpty(configuredRoles)) {
+                return false;
+            }
+            String[] configuredRoleCodes = configuredRoles.split(",");
             for (String roleCode : roleCodeStr.split(",")) {
-                String roleBqzm = BusinessConfigConstant.ROLE_BQZM;
-                String valueByKey1 = businessConfigService.getValueByKey(roleBqzm);
-                if (valueByKey1.equals(roleCode.trim())) {
-                    return true;
+                String userRoleCode = roleCode.trim();
+                if (StringUtils.isEmpty(userRoleCode)) {
+                    continue;
+                }
+                for (String configuredRoleCode : configuredRoleCodes) {
+                    if (userRoleCode.equals(configuredRoleCode.trim())) {
+                        return true;
+                    }
                 }
             }
         } catch (Exception e) {

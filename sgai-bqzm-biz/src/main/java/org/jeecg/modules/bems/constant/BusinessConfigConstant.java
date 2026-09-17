@@ -48,7 +48,8 @@ public class BusinessConfigConstant {
     public static final String PREVIEW_STATISTICS_PENDING_ALARM_OTHER = "preview:statistics:pendingAlarm:other";
 
     /**
-     * bqzm 角色编码：拥有该角色时读取当前配置，否则读取 ":other" 配置
+     * bqzm 角色编码：拥有该角色时读取当前配置，否则读取 ":other" 配置。
+     * 支持配置多个角色编码，英文逗号分隔（如 "bqzm,admin"），命中任意一个即视为 bqzm 角色。
      */
     public static final String ROLE_BQZM = "role:bqzm";
 

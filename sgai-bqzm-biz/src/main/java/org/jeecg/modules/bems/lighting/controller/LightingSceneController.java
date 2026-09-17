@@ -6,6 +6,7 @@ import io.swagger.annotations.ApiOperation;
 import lombok.AllArgsConstructor;
 import org.apache.shiro.authz.annotation.RequiresPermissions;
 import org.jeecg.common.api.vo.Result;
+import org.jeecg.common.aspect.annotation.AutoLog;
 import org.jeecg.modules.bems.lighting.dto.LightingSceneDetailDto;
 import org.jeecg.modules.bems.lighting.dto.LightingSceneDto;
 import org.jeecg.modules.bems.lighting.dto.LightingSceneQueryDto;
@@ -57,6 +58,7 @@ public class LightingSceneController {
     @ApiOperation("新增场景（兼容 planName+relType+relIds+operationType 入参）")
     @ButtonPermission("northAreaLighting:switch")
     @PostMapping("/add")
+    @AutoLog(value = "场景配置-新增", logType = 2, operateType = 2)
     public Result<String> add(@RequestBody LightingSceneDto dto) {
         service.add(dto);
         return Result.ok();
@@ -67,6 +69,7 @@ public class LightingSceneController {
      */
     @ApiOperation("编辑场景")
     @PostMapping("/edit")
+    @AutoLog
     public Result<String> edit(@RequestBody LightingSceneDto dto) {
         service.edit(dto);
         return Result.ok();
@@ -77,6 +80,7 @@ public class LightingSceneController {
      */
     @ApiOperation("删除场景")
     @DeleteMapping("/delete")
+    @AutoLog
     public Result<String> delete(@RequestParam Long id) {
         service.delete(id);
         return Result.ok();
@@ -96,6 +100,7 @@ public class LightingSceneController {
      */
     @ApiOperation("一键执行场景（按明细开/关对应区域、回路，自动记录控制日志）")
     @PostMapping("/apply")
+    @AutoLog
     public Result<String> apply(@RequestParam Long id) {
         service.apply(id);
         return Result.ok();
@@ -106,6 +111,7 @@ public class LightingSceneController {
      */
     @ApiOperation("场景全开/全关（sceneId + operationType：开启/关闭 或 OPEN/CLOSE，作用于场景下所有区域和回路，自动记录控制日志）")
     @PostMapping("/control")
+    @AutoLog
     public Result<String> control(@RequestParam Long sceneId, @RequestParam String operationType) {
         service.control(sceneId, operationType);
         return Result.ok();
