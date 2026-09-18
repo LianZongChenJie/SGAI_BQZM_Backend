@@ -29,6 +29,7 @@ import org.jeecg.modules.bems.lighting.mapper.LightingPlanMapper;
 import org.jeecg.modules.bems.lighting.mapper.LightingSceneDetailMapper;
 import org.jeecg.modules.bems.lighting.mq.send.LightingSendService;
 import org.jeecg.modules.bems.lighting.service.*;
+import org.jeecg.modules.bems.lighting.util.LightingPlanLogText;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -69,6 +70,16 @@ public class LightingPlanServiceImpl extends ServiceImpl<LightingPlanMapper, Lig
     private final ILightingPlanExecuteLogService lightingPlanExecuteLogService;
 
     private final LightingSceneDetailMapper lightingSceneDetailMapper;
+
+    /**
+     * 配置操作日志（计划/定时任务 新增、修改、启用、停用、删除时留痕）
+     */
+    private final ILightingConfigLogService lightingConfigLogService;
+
+    /**
+     * 配置日志文案（与 /bems/lighting/timerTask 共用同一套口径）
+     */
+    private final LightingPlanLogText lightingPlanLogText;
 
 
     @Override
@@ -177,6 +188,10 @@ public class LightingPlanServiceImpl extends ServiceImpl<LightingPlanMapper, Lig
         // 按关联类型计算并填充片区id
         plan.setDistrictId(computeDistrictId(plan));
         super.save(plan);
+        // 配置操作日志（新增时执行时间只在 lighting_plan 上，生效窗口/执行星期在"启用"时才落库，故此处为不限）
+        lightingConfigLogService.saveLog("新增", "定时控制", "定时任务", plan.getId(), plan.getPlanName(),
+                "新增定时任务；" + lightingPlanLogText.describe(
+                        lightingPlanLogText.snapshot(plan, plan.getExecutionTime(), null, null, null)));
     }
 
     /**
@@ -241,13 +256,33 @@ public class LightingPlanServiceImpl extends ServiceImpl<LightingPlanMapper, Lig
         if (!LightingPlan.STATUS_DISABLE.equals(old.getStatus())) {
             throw new JeecgBootException("计划已启用，不能修改");
         }
+        // 修改前快照（下面 plan 被就地覆盖，先取旧值用于对比；执行窗口存在 execution_time 表，编辑不改它）
+        LightingPlanExecutionTime oldEt = executionTimeService.getByPlanId(plan.getId());
+        String startDate = oldEt == null ? null : oldEt.getStartDate();
+        String endDate = oldEt == null ? null : oldEt.getEndDate();
+        String enabledWeek = oldEt == null ? null : oldEt.getEnabledWeek();
+        Map<String, String> before = lightingPlanLogText.snapshot(old, old.getExecutionTime(), startDate, endDate, enabledWeek);
         super.updateById(plan);
+        // 配置操作日志（记录"旧值 → 新值"差异）
+        // 新值取库内实际值：updateById 会忽略入参里的 null 字段，若前端漏传字段直接用入参拼快照会误报"→ 空"
+        LightingPlan latest = super.getById(plan.getId());
+        LightingPlan afterPlan = latest != null ? latest : plan;
+        Map<String, String> after = lightingPlanLogText.snapshot(afterPlan, afterPlan.getExecutionTime(), startDate, endDate, enabledWeek);
+        lightingConfigLogService.saveLog("修改", "定时控制", "定时任务", afterPlan.getId(), afterPlan.getPlanName(),
+                lightingPlanLogText.diff(before, after));
     }
 
     @Override
     @Transactional(rollbackFor = Exception.class)
     public void delete(Long id) {
         LightingPlan plan = super.getById(id);
+        // 删除前取出执行时间配置并拼好配置日志内容（删除后无法再查）
+        LightingPlanExecutionTime et = executionTimeService.getByPlanId(id);
+        String deleteContent = plan == null ? null : "删除定时任务；" + lightingPlanLogText.describe(
+                lightingPlanLogText.snapshot(plan, plan.getExecutionTime(),
+                        et == null ? null : et.getStartDate(),
+                        et == null ? null : et.getEndDate(),
+                        et == null ? null : et.getEnabledWeek()));
         // 定时任务同步的计划：同步删除对应的定时任务，避免数据不一致
         if(plan != null && plan.getScheduleJobId() != null){
             Long jobId = plan.getScheduleJobId();
@@ -262,6 +297,10 @@ public class LightingPlanServiceImpl extends ServiceImpl<LightingPlanMapper, Lig
         // 同步删除执行日志，避免孤儿数据
         lightingPlanExecuteLogService.remove(new LambdaQueryWrapper<LightingPlanExecuteLog>().eq(LightingPlanExecuteLog::getPlanId, id));
         super.removeById(id);
+        // 配置操作日志
+        if (plan != null) {
+            lightingConfigLogService.saveLog("删除", "定时控制", "定时任务", id, plan.getPlanName(), deleteContent);
+        }
     }
 
     /**
@@ -369,6 +408,11 @@ public class LightingPlanServiceImpl extends ServiceImpl<LightingPlanMapper, Lig
         super.updateById(plan);
         executionTimeService.saveOrUpdate(data);
         plan.setExecutionTime(data.getExecutionTime());
+        // 配置操作日志（启用）
+        lightingConfigLogService.saveLog("修改", "定时控制", "定时任务", plan.getId(), plan.getPlanName(),
+                "启用定时任务；" + lightingPlanLogText.describe(
+                        lightingPlanLogText.snapshot(plan, data.getExecutionTime(),
+                                data.getStartDate(), data.getEndDate(), data.getEnabledWeek())));
         // 判断下次执行时间
         if (data.getExecutionLocalTime().isBefore(LocalTime.now())) {
             return;
@@ -399,6 +443,8 @@ public class LightingPlanServiceImpl extends ServiceImpl<LightingPlanMapper, Lig
         }
         plan.setStatus(LightingPlan.STATUS_DISABLE);
         super.updateById(plan);
+        // 配置操作日志（停用；重复停用上面已 return，不会重复记）
+        lightingConfigLogService.saveLog("修改", "定时控制", "定时任务", plan.getId(), plan.getPlanName(), "停用定时任务");
     }
 
     private void executeArea(Collection<Long> areaIds, String operationType, Long parentId){

@@ -17,7 +17,6 @@ import org.jeecg.modules.bems.lighting.entity.LightingPlanExecutionTime;
 import org.jeecg.modules.bems.lighting.entity.LightingScene;
 import org.jeecg.modules.bems.lighting.service.ILightingAreaService;
 import org.jeecg.modules.bems.lighting.service.ILightingCircuitService;
-import org.jeecg.modules.bems.lighting.service.ILightingConfigLogService;
 import org.jeecg.modules.bems.lighting.service.ILightingPlanExecutionTimeService;
 import org.jeecg.modules.bems.lighting.service.ILightingPlanService;
 import org.jeecg.modules.bems.lighting.service.ILightingSceneService;
@@ -46,11 +45,6 @@ public class LightingTimerTaskController {
     private final ILightingCircuitService circuitService;
 
     private final ILightingSceneService sceneService;
-
-    /**
-     * 配置操作日志（新增/修改/启停/删除定时任务时留痕）
-     */
-    private final ILightingConfigLogService configLogService;
 
     /**
      * 定时任务列表（分页）
@@ -139,10 +133,7 @@ public class LightingTimerTaskController {
             executionTimeService.saveOrUpdate(et);
         }
 
-        // 配置操作日志
-        configLogService.saveLog("新增", "定时控制", "定时任务", plan.getId(), plan.getPlanName(),
-                "新增定时任务；" + describeTask(plan, plan.getExecutionTime(),
-                        dto.getStartDate(), dto.getEndDate(), dto.getEnabledWeek()));
+        // 配置操作日志由 planService.add 统一记录（/plan 与 /timerTask 两套接口共用同一口径，避免重复记账）
 
         return Result.ok("新增成功");
     }
@@ -161,12 +152,8 @@ public class LightingTimerTaskController {
             return Result.error("任务已启用，无法编辑");
         }
 
-        // 修改前快照（下面 plan 会被就地覆盖，需先取旧值用于对比）
+        // 执行时间配置（下面 plan 会被就地覆盖，需先取出旧记录用于增量更新）
         LightingPlanExecutionTime oldEt = executionTimeService.getByPlanId(plan.getId());
-        Map<String, String> before = taskSnapshot(plan, plan.getExecutionTime(),
-                oldEt == null ? null : oldEt.getStartDate(),
-                oldEt == null ? null : oldEt.getEndDate(),
-                oldEt == null ? null : oldEt.getEnabledWeek());
 
         plan.setPlanName(dto.getPlanName());
         plan.setRelType(dto.getRelType());
@@ -190,11 +177,7 @@ public class LightingTimerTaskController {
         et.setVersion(UUID.randomUUID().toString());
         executionTimeService.saveOrUpdate(et);
 
-        // 配置操作日志（记录"旧值 → 新值"差异）
-        Map<String, String> after = taskSnapshot(plan, plan.getExecutionTime(),
-                dto.getStartDate(), dto.getEndDate(), dto.getEnabledWeek());
-        configLogService.saveLog("修改", "定时控制", "定时任务", plan.getId(), plan.getPlanName(),
-                diffSnapshot(before, after));
+        // 配置操作日志由 planService.edit 统一记录（旧值 → 新值差异）
 
         return Result.ok("编辑成功");
     }
@@ -213,13 +196,8 @@ public class LightingTimerTaskController {
         if (et == null) {
             return Result.error("请先设置执行时间");
         }
+        // 配置操作日志由 planService.enable 统一记录（scheduleJobId 不为空时服务内部直接 return，不会记账）
         planService.enable(et);
-        // 配置操作日志（scheduleJobId 不为空时由动态调度器接管，本计划未实际启用，不记日志）
-        if (plan.getScheduleJobId() == null) {
-            configLogService.saveLog("修改", "定时控制", "定时任务", plan.getId(), plan.getPlanName(),
-                    "启用定时任务；" + describeTask(plan, et.getExecutionTime(),
-                            et.getStartDate(), et.getEndDate(), et.getEnabledWeek()));
-        }
         return Result.ok("启用成功");
     }
 
@@ -229,13 +207,8 @@ public class LightingTimerTaskController {
     @ApiOperation("停用定时任务")
     @PostMapping("/disable")
     public Result<String> disable(@RequestParam Long id) {
-        LightingPlan plan = planService.getById(id);
+        // 配置操作日志由 planService.disable 统一记录（已停用、由调度器接管的不记）
         planService.disable(id);
-        // 配置操作日志（仅记录"确实由启用改为停用"：已停用、由调度器接管的不记）
-        if (plan != null && plan.getScheduleJobId() == null
-                && LightingPlan.STATUS_ENABLE.equals(plan.getStatus())) {
-            configLogService.saveLog("修改", "定时控制", "定时任务", plan.getId(), plan.getPlanName(), "停用定时任务");
-        }
         return Result.ok("停用成功");
     }
 
@@ -245,22 +218,8 @@ public class LightingTimerTaskController {
     @ApiOperation("删除定时任务")
     @PostMapping("/delete")
     public Result<String> delete(@RequestParam Long id) {
-        // 删除前取出计划与执行时间配置（删除后无法再查），用于记录操作日志
-        LightingPlan plan = planService.getById(id);
-        LightingPlanExecutionTime et = executionTimeService.getByPlanId(id);
-        executionTimeService.remove(
-                new LambdaQueryWrapper<LightingPlanExecutionTime>()
-                        .eq(LightingPlanExecutionTime::getPlanId, id)
-        );
+        // 配置操作日志由 planService.delete 统一记录；执行时间/执行日志也由服务内一并清理
         planService.delete(id);
-        // 配置操作日志
-        if (plan != null) {
-            configLogService.saveLog("删除", "定时控制", "定时任务", id, plan.getPlanName(),
-                    "删除定时任务；" + describeTask(plan, plan.getExecutionTime(),
-                            et == null ? null : et.getStartDate(),
-                            et == null ? null : et.getEndDate(),
-                            et == null ? null : et.getEnabledWeek()));
-        }
         return Result.ok("删除成功");
     }
 
@@ -333,116 +292,6 @@ public class LightingTimerTaskController {
         return result;
     }
 
-    // ==================== 配置操作日志：内容拼装 ====================
-
-    private static final String[] WEEK_NAMES = {"", "周一", "周二", "周三", "周四", "周五", "周六", "周日"};
-
-    /**
-     * 定时任务快照（用于对比"改了哪些字段"）。
-     * 不含状态字段：编辑时不允许已启用，启停动作由 /enable、/disable 单独记日志，
-     * 避免出现"状态：禁用 → 禁用"这类噪音。
-     */
-    private Map<String, String> taskSnapshot(LightingPlan plan, String executionTime,
-                                             String startDate, String endDate, String enabledWeek) {
-        Map<String, String> snapshot = new LinkedHashMap<>();
-        snapshot.put("名称", plan.getPlanName());
-        snapshot.put("计划类型", plan.getPlanType());
-        snapshot.put("周期类型", plan.getCycleType());
-        snapshot.put("目标", targetText(plan));
-        snapshot.put("动作", plan.getOperationType());
-        snapshot.put("执行时间", executionTime);
-        snapshot.put("生效窗口", formatWindow(startDate, endDate));
-        snapshot.put("执行星期", formatWeek(enabledWeek));
-        return snapshot;
-    }
-
-    /**
-     * 快照压缩为一行文本（新增/启用时直接作为操作内容），如：
-     * 计划类型：定时任务；周期类型：自定义；目标：场景 服贸会全部；动作：开启；执行时间：19:00:00；…
-     */
-    private String describeTask(LightingPlan plan, String executionTime,
-                                String startDate, String endDate, String enabledWeek) {
-        return taskSnapshot(plan, executionTime, startDate, endDate, enabledWeek).entrySet().stream()
-                .map(e -> e.getKey() + "：" + display(e.getValue()))
-                .collect(Collectors.joining("；"));
-    }
-
-    /**
-     * 快照差异（旧值 → 新值），无变化返回"无字段变更"
-     */
-    private String diffSnapshot(Map<String, String> before, Map<String, String> after) {
-        List<String> changes = new ArrayList<>();
-        before.forEach((label, oldValue) -> {
-            String newValue = after.get(label);
-            if (!Objects.equals(oldValue, newValue)) {
-                changes.add(label + "：" + display(oldValue) + " → " + display(newValue));
-            }
-        });
-        return changes.isEmpty() ? "无字段变更" : String.join("；", changes);
-    }
-
-    /**
-     * 控制目标描述：场景 服贸会全部（按 relType 反查区域/回路/场景名称）
-     */
-    private String targetText(LightingPlan plan) {
-        String names = null;
-        try {
-            names = buildRelNameMap(List.of(plan)).get(plan.getId());
-        } catch (Exception e) {
-            log.warn("解析定时任务目标名称失败，计划id：{}，relIds：{}", plan.getId(), plan.getRelIds(), e);
-        }
-        if (StringUtils.isEmpty(names)) {
-            names = plan.getRelIds();
-        }
-        return nullToEmpty(plan.getRelType()) + " " + nullToEmpty(names);
-    }
-
-    /**
-     * 执行星期展示：1,2,3 → 周一、周二、周三；七天全选 → 每天；空 → 不限
-     */
-    private String formatWeek(String enabledWeek) {
-        if (StringUtils.isBlank(enabledWeek)) {
-            return "不限";
-        }
-        Set<Integer> days = new LinkedHashSet<>();
-        for (String s : enabledWeek.split(",")) {
-            if (StringUtils.isBlank(s)) {
-                continue;
-            }
-            try {
-                days.add(Integer.parseInt(s.trim()));
-            } catch (NumberFormatException e) {
-                // 非数字（如直接存"每天"）忽略，最后原样返回
-            }
-        }
-        if (days.isEmpty()) {
-            return enabledWeek;
-        }
-        if (days.size() == 7) {
-            return "每天";
-        }
-        return days.stream().filter(d -> d >= 1 && d <= 7).map(d -> WEEK_NAMES[d])
-                .collect(Collectors.joining("、"));
-    }
-
-    /**
-     * 生效窗口展示：起止同一天显示单日，都为空显示不限
-     */
-    private String formatWindow(String startDate, String endDate) {
-        if (StringUtils.isBlank(startDate) && StringUtils.isBlank(endDate)) {
-            return "不限";
-        }
-        if (Objects.equals(startDate, endDate)) {
-            return nullToEmpty(startDate);
-        }
-        return nullToEmpty(startDate) + "~" + nullToEmpty(endDate);
-    }
-
-    private String display(String value) {
-        return StringUtils.isBlank(value) ? "空" : value;
-    }
-
-    private String nullToEmpty(String value) {
-        return value == null ? "" : value;
-    }
+    // 配置日志文案（快照/差异/星期与窗口展示）已抽到 LightingPlanLogText，
+    // 与 /bems/lighting/plan 那套接口共用同一份实现，此处不再保留副本
 }
