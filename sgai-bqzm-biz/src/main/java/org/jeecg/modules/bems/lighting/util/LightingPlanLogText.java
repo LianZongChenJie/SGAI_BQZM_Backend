@@ -35,6 +35,12 @@ public class LightingPlanLogText {
 
     private static final String[] WEEK_NAMES = {"", "周一", "周二", "周三", "周四", "周五", "周六", "周日"};
 
+    /**
+     * 无限制（未设生效窗口 / 未指定执行星期）的展示文案。
+     * 该值在 {@link #describe(Map)} 中会被过滤掉——"不限"与"没配置"等价，不属于有效信息。
+     */
+    private static final String UNLIMITED = "不限";
+
     private final ILightingAreaService areaService;
 
     private final ILightingCircuitService circuitService;
@@ -61,13 +67,12 @@ public class LightingPlanLogText {
     /**
      * 计划快照（用于对比"改了哪些字段"）。
      * 不含 state/status 字段：启停由 /enable、/disable 单独记日志，避免出现"状态：禁用 → 禁用"这类噪音。
+     * 不含 plan_type/cycle_type：前端新建弹框没有这两个输入项、后端也不补默认值，库里恒为 NULL（见 createNewTimerModal.vue），记进日志只会得到"计划类型：空"。
      */
     public Map<String, String> snapshot(LightingPlan plan, String executionTime,
                                         String startDate, String endDate, String enabledWeek) {
         Map<String, String> snapshot = new LinkedHashMap<>();
         snapshot.put("名称", plan.getPlanName());
-        snapshot.put("计划类型", plan.getPlanType());
-        snapshot.put("周期类型", plan.getCycleType());
         snapshot.put("目标", targetText(plan));
         snapshot.put("动作", plan.getOperationType());
         snapshot.put("执行时间", executionTime);
@@ -81,13 +86,22 @@ public class LightingPlanLogText {
     }
 
     /**
-     * 快照压缩为一行文本（新增/启用时直接作为操作内容），如：
-     * 计划类型：定时任务；周期类型：自定义；目标：场景 服贸会全部；动作：开启；执行时间：19:00:00；…
+     * 快照压缩为一行文本（新增/启用/删除时直接作为操作内容）。
+     * <p>
+     * 跳过两类"等于没说"的项，避免日志刷噪音：
+     * <ul>
+     *   <li>空值：新增/编辑计划时并不配置执行相关项（执行时间、生效窗口、执行星期是在"启用"时才配的，
+     *       见 TimerEnableModal → /plan/enable），此时对应值为 null，记进日志只会得到"执行时间：空"；</li>
+     *   <li>"不限"：表示确实没有限制（如未设生效窗口/未指定星期），与"没配置"等价，同样不记。</li>
+     * </ul>
+     * 如：名称：服贸会周五六整体开；目标：场景 服贸会周五六整体开；动作：开启
      */
     public String describe(Map<String, String> snapshot) {
-        return snapshot.entrySet().stream()
-                .map(e -> e.getKey() + "：" + display(e.getValue()))
+        String text = snapshot.entrySet().stream()
+                .filter(e -> StringUtils.isNotBlank(e.getValue()) && !UNLIMITED.equals(e.getValue()))
+                .map(e -> e.getKey() + "：" + e.getValue())
                 .collect(Collectors.joining("；"));
+        return StringUtils.isBlank(text) ? "无" : text;
     }
 
     /**
@@ -115,7 +129,7 @@ public class LightingPlanLogText {
      */
     public static String formatWeek(String enabledWeek) {
         if (StringUtils.isBlank(enabledWeek)) {
-            return "不限";
+            return UNLIMITED;
         }
         Set<Integer> days = new LinkedHashSet<>();
         for (String s : enabledWeek.split(",")) {
@@ -143,7 +157,7 @@ public class LightingPlanLogText {
      */
     public static String formatWindow(String startDate, String endDate) {
         if (StringUtils.isBlank(startDate) && StringUtils.isBlank(endDate)) {
-            return "不限";
+            return UNLIMITED;
         }
         if (Objects.equals(startDate, endDate)) {
             return nullToEmpty(startDate);
