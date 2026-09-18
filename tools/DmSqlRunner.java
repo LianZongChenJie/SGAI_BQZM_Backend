@@ -111,6 +111,33 @@ public class DmSqlRunner {
         return "prod".equalsIgnoreCase(targetDb) ? PASSWORD_PROD : PASSWORD;
     }
 
+    // ==================== 生产库只读保护 ====================
+    // ★ 生产库【只能查询，禁止任何变更】（用户 2026-09-18 明确要求，最高优先级）
+    // 这里做硬拦截：-db=prod 时，只允许查询类语句；任何 DML/DDL 在提交给数据库之前就被拒绝。
+    private static final java.util.regex.Pattern READ_ONLY_START =
+            java.util.regex.Pattern.compile("(?is)^\\s*(select|with|show|explain|desc|describe)\\b");
+    /** SELECT ... INTO 会建表，也算变更 */
+    private static final java.util.regex.Pattern READ_ONLY_FORBIDDEN =
+            java.util.regex.Pattern.compile("(?is)\\binto\\b");
+
+    private static boolean isReadOnlyTarget(String targetDb) {
+        return "prod".equalsIgnoreCase(targetDb);
+    }
+
+    /** 校验语句是否允许在该目标库执行；不允许时返回拒绝原因，允许时返回 null */
+    private static String checkReadOnly(String targetDb, String sql) {
+        if (!isReadOnlyTarget(targetDb)) {
+            return null;
+        }
+        if (!READ_ONLY_START.matcher(sql).find()) {
+            return "非查询语句（仅允许 SELECT / WITH / SHOW / EXPLAIN / DESC）";
+        }
+        if (READ_ONLY_FORBIDDEN.matcher(sql).find()) {
+            return "含有 INTO（SELECT ... INTO 会建表，属变更）";
+        }
+        return null;
+    }
+
     /** 交互模式：循环执行用户输入的单条 SQL */
     private static void interactiveMode(String targetDb, String url) {
         System.out.println("=== 达梦数据库交互执行工具 ===");
@@ -192,9 +219,17 @@ public class DmSqlRunner {
     private static void execute(String targetDb, String url, List<String> statements) {
         try (Connection conn = DriverManager.getConnection(url, resolveUser(targetDb), resolvePassword(targetDb))) {
             System.out.println("[连接成功] 已连接达梦数据库");
+            if (isReadOnlyTarget(targetDb)) {
+                System.out.println("[只读模式] 生产库：仅允许查询（SELECT/WITH/SHOW/EXPLAIN/DESC），任何变更语句会被直接拒绝");
+            }
             try (Statement stmt = conn.createStatement()) {
                 for (String sql : statements) {
                     System.out.println("\n[执行] " + sql);
+                    String refuseReason = checkReadOnly(targetDb, sql);
+                    if (refuseReason != null) {
+                        System.err.println("[已拒绝] 生产库只读，禁止变更：" + refuseReason);
+                        continue;
+                    }
                     boolean hasResult;
                     try {
                         hasResult = stmt.execute(sql);
