@@ -119,7 +119,7 @@ public class LightingCircuitServiceImpl extends ServiceImpl<CircuitMapper, Light
         if(area == null){
             return;
         }
-        LightingCircuit circuit = super.getOne(new LambdaQueryWrapper<LightingCircuit>().eq(LightingCircuit::getAreaId,area.getId()).eq(LightingCircuit::getCircuitCode,circuitCode));
+        LightingCircuit circuit = getOneCircuit(area.getId(), circuitCode);
         if(circuit == null || status.equals(circuit.getStatus())){
             return;
         }
@@ -237,6 +237,25 @@ public class LightingCircuitServiceImpl extends ServiceImpl<CircuitMapper, Light
     }
 
     /**
+     * 按 area_id + circuit_code 查唯一回路。
+     * lighting_circuit 无主键/唯一索引，出现重复行时 getOne 会抛 TooManyResultsException，
+     * 使整条 MQ 状态消息被丢弃；此处改为取第一条并告警（已知脏数据：id=1065 两条重复）。
+     */
+    private LightingCircuit getOneCircuit(Long areaId, String circuitCode) {
+        List<LightingCircuit> list = super.list(new LambdaQueryWrapper<LightingCircuit>()
+                .eq(LightingCircuit::getAreaId, areaId)
+                .eq(LightingCircuit::getCircuitCode, circuitCode));
+        if (list == null || list.isEmpty()) {
+            return null;
+        }
+        if (list.size() > 1) {
+            log.warn("回路存在重复数据，取第一条：area_id={}, circuit_code={}, 匹配条数={}, 取用id={}",
+                    areaId, circuitCode, list.size(), list.get(0).getId());
+        }
+        return list.get(0);
+    }
+
+    /**
      * 更新通讯状态
      */
     @Override
@@ -246,7 +265,7 @@ public class LightingCircuitServiceImpl extends ServiceImpl<CircuitMapper, Light
         if(area == null){
             return;
         }
-        LightingCircuit circuit = super.getOne(new LambdaQueryWrapper<LightingCircuit>().eq(LightingCircuit::getAreaId,area.getId()).eq(LightingCircuit::getCircuitCode,circuitCode));
+        LightingCircuit circuit = getOneCircuit(area.getId(), circuitCode);
         if(circuit == null){
             return;
         }

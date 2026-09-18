@@ -507,27 +507,20 @@ public class LightingMsgListener {
         String fullCircuitCode = gatewayCode + "-" + circuitCode;
 
         // 查询回路：
-        // 1) GatewayCode 在 11-44 范围：先按 space=903 + area_code=10.22.160.{GatewayCode} 查区域，
-        //    再用 area_id + circuit_code=GatewayCode-CircuitCode 查回路
+        // 1) 能按 space=903 + area_code=10.22.160.{GatewayCode} 找到区域时，用 area_id + circuit_code 精确匹配
+        //    （903 的网关实际是 11~45 + 53，不能用固定区间判断，否则 45/53 会落到全局匹配分支、可能跨空间撞码）
         // 2) 其他网关：直接用 circuit_code 全局匹配（老逻辑）
-        LightingCircuit circuit = null;
-        int gw = -1;
-        try {
-            gw = Integer.parseInt(gatewayCode.trim());
-        } catch (NumberFormatException ignored) {
-        }
-        if (gw >= 11 && gw <= 44) {
-            LightingArea area = areaService.getByCode("903", "10.22.160." + gatewayCode);
-            if (area == null) {
-                log.warn("【公区】未找到对应的区域，space=903, area_code=10.22.160.{}", gatewayCode);
-                return;
-            }
-            circuit = circuitService.getOne(new LambdaQueryWrapper<LightingCircuit>()
-                    .eq(LightingCircuit::getAreaId, area.getId())
-                    .eq(LightingCircuit::getCircuitCode, fullCircuitCode));
+        // 两条分支都走 findOneCircuit：lighting_circuit 无主键约束，存在重复行时 getOne 会抛
+        // TooManyResultsException，导致该回路的每条状态消息都被丢弃
+        LightingArea gwArea = areaService.getByCode("903", "10.22.160." + gatewayCode);
+        LightingCircuit circuit;
+        if (gwArea != null) {
+            circuit = findOneCircuit(new LambdaQueryWrapper<LightingCircuit>()
+                    .eq(LightingCircuit::getAreaId, gwArea.getId())
+                    .eq(LightingCircuit::getCircuitCode, fullCircuitCode), fullCircuitCode);
         } else {
-            circuit = circuitService.getOne(new LambdaQueryWrapper<LightingCircuit>()
-                    .eq(LightingCircuit::getCircuitCode, fullCircuitCode));
+            circuit = findOneCircuit(new LambdaQueryWrapper<LightingCircuit>()
+                    .eq(LightingCircuit::getCircuitCode, fullCircuitCode), fullCircuitCode);
         }
 
         if (circuit == null) {
@@ -784,9 +777,9 @@ public class LightingMsgListener {
             return;
         }
         // 按 areaId + CircuitCode 查回路
-        LightingCircuit circuit = circuitService.getOne(new LambdaQueryWrapper<LightingCircuit>()
+        LightingCircuit circuit = findOneCircuit(new LambdaQueryWrapper<LightingCircuit>()
                 .eq(LightingCircuit::getAreaId, area.getId())
-                .eq(LightingCircuit::getCircuitCode, circuitCode));
+                .eq(LightingCircuit::getCircuitCode, circuitCode), circuitCode);
         if (circuit == null) {
             log.warn("【公区904】未找到对应的回路，areaId={}, circuitCode={}", areaIdStr, circuitCode);
             return;
@@ -845,9 +838,9 @@ public class LightingMsgListener {
         List<Long> areaIds = areaList.stream().map(LightingArea::getId).collect(Collectors.toList());
 
         // AreaID 是回路编码，按 area_id IN (区域id集合) + circuit_code=AreaID 匹配回路
-        LightingCircuit circuit = circuitService.getOne(new LambdaQueryWrapper<LightingCircuit>()
+        LightingCircuit circuit = findOneCircuit(new LambdaQueryWrapper<LightingCircuit>()
                 .in(LightingCircuit::getAreaId, areaIds)
-                .eq(LightingCircuit::getCircuitCode, areaIdStr));
+                .eq(LightingCircuit::getCircuitCode, areaIdStr), areaIdStr);
         if (circuit == null) {
             log.warn("【公区905】未找到对应的回路，AreaID(circuit_code)={}, gatewayCode={}", areaIdStr, gatewayCode);
             return;
@@ -862,6 +855,24 @@ public class LightingMsgListener {
 
 //        log.info("【公区905】回路状态更新完成：AreaID={}, circuit_code={}, areaName={}, status={}, comstat={}",
 //                areaIdStr, circuit.getCircuitCode(), area != null ? area.getAreaName() : null, status, circuit.getComstat());
+    }
+
+    /**
+     * 查唯一回路：匹配到多条时取第一条并告警。
+     * lighting_circuit 无主键/唯一索引（已知脏数据：id=1065 有两条完全相同的 53-4），
+     * 用 getOne 会抛 TooManyResultsException，导致该回路的每条状态消息都被整条丢弃。
+     */
+    private LightingCircuit findOneCircuit(LambdaQueryWrapper<LightingCircuit> wrapper, String fullCircuitCode) {
+        List<LightingCircuit> list = circuitService.list(wrapper);
+        if (list == null || list.isEmpty()) {
+            return null;
+        }
+        if (list.size() > 1) {
+            log.warn("【公区】circuit_code={} 匹配到 {} 条回路，取第一条（存在重复回路数据，建议清理）：ids={}",
+                    fullCircuitCode, list.size(),
+                    list.stream().map(LightingCircuit::getId).collect(Collectors.toList()));
+        }
+        return list.get(0);
     }
 
     /**
@@ -905,9 +916,9 @@ public class LightingMsgListener {
         List<Long> areaIds = areaList.stream().map(LightingArea::getId).collect(Collectors.toList());
 
         // AreaID 是回路编码，按 area_id IN (区域id集合) + circuit_code=AreaID 匹配回路
-        LightingCircuit circuit = circuitService.getOne(new LambdaQueryWrapper<LightingCircuit>()
+        LightingCircuit circuit = findOneCircuit(new LambdaQueryWrapper<LightingCircuit>()
                 .in(LightingCircuit::getAreaId, areaIds)
-                .eq(LightingCircuit::getCircuitCode, areaIdStr));
+                .eq(LightingCircuit::getCircuitCode, areaIdStr), areaIdStr);
         if (circuit == null) {
             log.warn("【公区906】未找到对应的回路，AreaID(circuit_code)={}, gatewayCode={}", areaIdStr, gatewayCode);
             return;

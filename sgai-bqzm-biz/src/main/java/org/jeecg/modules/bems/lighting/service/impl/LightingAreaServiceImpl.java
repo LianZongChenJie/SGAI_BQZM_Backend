@@ -459,7 +459,7 @@ public class LightingAreaServiceImpl extends ServiceImpl<LightingAreaMapper, Lig
      */
     @Override
     public void mqControl(String space,String areaCode,String value) {
-        LightingArea area = super.getOne(new LambdaQueryWrapper<LightingArea>().eq(LightingArea::getSpace, space).eq(LightingArea::getAreaCode, areaCode));
+        LightingArea area = getByCode(space, areaCode);
         if(area == null){
             return;
         }
@@ -477,9 +477,25 @@ public class LightingAreaServiceImpl extends ServiceImpl<LightingAreaMapper, Lig
         super.update(new LambdaUpdateWrapper<LightingArea>().eq(LightingArea::getId,area.getId()).set(LightingArea::getStatus,status));
     }
 
+    /**
+     * 按 space + area_code 查区域。
+     * 注意：905/906 是"一个网关挂多个区域"，存在多条区域共用同一 area_code 的情况
+     * （905 的 154.100 有 9 条、906 的 154.2 有 4 条），用 getOne 会抛 TooManyResultsException；
+     * 此处取第一条并告警，避免让 MQ 消息处理整条失败。
+     */
     @Override
     public LightingArea getByCode(String space,String areaCode) {
-        return getOne(new LambdaQueryWrapper<LightingArea>().eq(LightingArea::getSpace,space).eq(LightingArea::getAreaCode,areaCode));
+        List<LightingArea> list = super.list(new LambdaQueryWrapper<LightingArea>()
+                .eq(LightingArea::getSpace, space)
+                .eq(LightingArea::getAreaCode, areaCode));
+        if (list == null || list.isEmpty()) {
+            return null;
+        }
+        if (list.size() > 1) {
+            log.warn("区域存在多条同码数据，取第一条：space={}, area_code={}, 匹配条数={}, 取用id={}",
+                    space, areaCode, list.size(), list.get(0).getId());
+        }
+        return list.get(0);
     }
 
     @Override
