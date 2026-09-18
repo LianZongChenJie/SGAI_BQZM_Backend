@@ -4,11 +4,10 @@ import io.swagger.annotations.Api;
 import io.swagger.annotations.ApiOperation;
 import lombok.AllArgsConstructor;
 import org.jeecg.common.api.vo.Result;
-import org.jeecg.modules.bems.lighting.entity.LightingConfigLog;
+import org.jeecg.modules.bems.lighting.dto.LightingConfigLogQueryDto;
 import org.jeecg.modules.bems.lighting.service.ILightingConfigLogService;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.RequestMapping;
-import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 
 /**
@@ -24,13 +23,13 @@ public class LightingConfigLogController {
 
     /**
      * 分页查询配置日志
+     * 支持：操作类型/操作模块/操作人账号/操作对象类型/操作对象ID（精确），
+     * 操作人姓名/操作对象名称/操作内容（模糊），操作时间段 startTime~endTime（含边界）
      */
-    @ApiOperation("分页查询配置日志")
+    @ApiOperation("分页查询配置日志（支持操作类型、模块、操作人、对象、内容关键字、操作时间段筛选）")
     @GetMapping("/listPage")
-    public Result<?> listPage(LightingConfigLog params,
-                              @RequestParam(defaultValue = "1") int pageNo,
-                              @RequestParam(defaultValue = "10") int pageSize) {
-        return Result.ok(service.listPage(params, pageNo, pageSize));
+    public Result<?> listPage(LightingConfigLogQueryDto param) {
+        return Result.ok(service.listPage(param));
     }
 
     /**
