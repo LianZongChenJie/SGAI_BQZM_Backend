@@ -41,15 +41,22 @@ public class DmSqlRunner {
     // 51 服务器库
     private static final String URL_51 =
             "jdbc:dm://192.168.204.51:5238?schema=BQZM&compatibleMode=mysql&ignoreCase=true&ENCODING=utf-8";
-    // 109 服务器库（现业务库，51 已迁移/不可达）
+    // 109 服务器库（开发库，51 已迁移/不可达）
     private static final String URL_109 =
             "jdbc:dm://192.168.204.109:5238?schema=BQZM&compatibleMode=mysql&ignoreCase=true&ENCODING=utf-8";
     private static final String USER = "SYSDBA";
     private static final String PASSWORD = "Liming@2026";
+    // 生产库（2026-09-18 用户提供，需内网/VPN 可达）
+    // 连不上时启动 JVM 加参数：-Djava.net.preferIPv4Stack=true（避免域名解析走 IPv6）
+    // 注意：URL 里不能带 /DMSERVER 路径段，否则驱动会把它当成模式名报"无效的模式名[DMSERVER]"
+    private static final String URL_PROD =
+            "jdbc:dm://10.168.56.103:5236?schema=BQZM&compatibleMode=mysql&ignoreCase=true&ENCODING=utf-8";
+    private static final String USER_PROD = "bqzm";
+    private static final String PASSWORD_PROD = "Bqzm@123456";
     // ================================================
 
     public static void main(String[] args) {
-        // 解析可选参数 -db=local|51，默认 local
+        // 解析可选参数 -db=local|51|109|prod，默认 local
         String targetDb = "local";
         String sqlFile = null;
         for (String arg : args) {
@@ -62,7 +69,7 @@ public class DmSqlRunner {
 
         if (sqlFile == null) {
             // 交互模式
-            interactiveMode(resolveUrl(targetDb));
+            interactiveMode(targetDb, resolveUrl(targetDb));
             return;
         }
 
@@ -75,7 +82,7 @@ public class DmSqlRunner {
                 return;
             }
             System.out.println("[解析] 从 " + sqlFile + " 解析出 " + statements.size() + " 条 SQL 语句");
-            execute(url, statements);
+            execute(targetDb, url, statements);
         } catch (Exception e) {
             System.err.println("[错误] 执行失败: " + e.getMessage());
             e.printStackTrace();
@@ -89,11 +96,23 @@ public class DmSqlRunner {
         if ("109".equalsIgnoreCase(targetDb)) {
             return URL_109;
         }
+        if ("prod".equalsIgnoreCase(targetDb)) {
+            return URL_PROD;
+        }
         return URL_LOCAL;
     }
 
+    /** 各目标库的账号（默认 SYSDBA，生产用 bqzm） */
+    private static String resolveUser(String targetDb) {
+        return "prod".equalsIgnoreCase(targetDb) ? USER_PROD : USER;
+    }
+
+    private static String resolvePassword(String targetDb) {
+        return "prod".equalsIgnoreCase(targetDb) ? PASSWORD_PROD : PASSWORD;
+    }
+
     /** 交互模式：循环执行用户输入的单条 SQL */
-    private static void interactiveMode(String url) {
+    private static void interactiveMode(String targetDb, String url) {
         System.out.println("=== 达梦数据库交互执行工具 ===");
         System.out.println("连接: " + url);
         System.out.println("输入 SQL 并按回车执行，输入 exit 退出。");
@@ -107,7 +126,7 @@ public class DmSqlRunner {
                 if (sql.trim().isEmpty()) {
                     continue;
                 }
-                execute(url, java.util.Collections.singletonList(sql));
+                execute(targetDb, url, java.util.Collections.singletonList(sql));
             }
         } catch (Exception e) {
             System.err.println("[错误] " + e.getMessage());
@@ -170,8 +189,8 @@ public class DmSqlRunner {
     }
 
     /** 在单连接中依次执行所有语句，并打印结果 */
-    private static void execute(String url, List<String> statements) {
-        try (Connection conn = DriverManager.getConnection(url, USER, PASSWORD)) {
+    private static void execute(String targetDb, String url, List<String> statements) {
+        try (Connection conn = DriverManager.getConnection(url, resolveUser(targetDb), resolvePassword(targetDb))) {
             System.out.println("[连接成功] 已连接达梦数据库");
             try (Statement stmt = conn.createStatement()) {
                 for (String sql : statements) {

@@ -7,7 +7,9 @@ rem   1) run a SQL file on local db (default):
 rem        run_sql.bat <sql-file-path>
 rem   2) run a SQL file on 51 db:
 rem        run_sql.bat <sql-file-path> -db=51
-rem   3) no argument: enter interactive mode (type SQL line by line)
+rem   3) run a SQL file on production db:
+rem        run_sql.bat <sql-file-path> -db=prod
+rem   4) no argument: enter interactive mode (type SQL line by line)
 rem ============================================================
 
 set "DM_DRIVER=C:\Users\8823\.m2\repository\com\dameng\DmJdbcDriver18\8.1.3.140\DmJdbcDriver18-8.1.3.140.jar"
@@ -25,6 +27,7 @@ rem compile (ignore errors if already compiled)
 javac -encoding UTF-8 -cp "%DM_DRIVER%" DmSqlRunner.java 2>nul
 
 rem run
-java -cp ".;%DM_DRIVER%" DmSqlRunner %*
+rem -Djava.net.preferIPv4Stack=true：避免域名解析走 IPv6 导致连不上（生产库 10.168.56.103 需要）
+java -Djava.net.preferIPv4Stack=true -cp ".;%DM_DRIVER%" DmSqlRunner %*
 
 pause
