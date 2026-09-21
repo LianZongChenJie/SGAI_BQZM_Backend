@@ -76,8 +76,11 @@ public class LightingPlanExecuteLog {
     @DateTimeFormat(pattern = "yyyy-MM-dd HH:mm:ss")
     private Date verifyTime;
 
-    /** 验证/补发结果详情（复查回路数、补发的回路、跳过的目标等） */
+    /** 验证/补发结果详情（只记摘要：第N/M轮、复查数、补发数、跳过原因；补发明细在控制日志里） */
     private String verifyResult;
+
+    /** 持续验证已执行轮次（含当前轮；0/null=尚未执行）。总轮次取 business_config: plan:verify:times */
+    private Integer verifyCount;
 
     /** 创建人 */
     private String createBy;

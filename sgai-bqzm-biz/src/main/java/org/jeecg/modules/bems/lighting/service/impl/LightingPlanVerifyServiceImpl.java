@@ -47,10 +47,12 @@ public class LightingPlanVerifyServiceImpl implements ILightingPlanVerifyService
     private static final String SWITCH_ON = "开启";
     /** 默认延迟分钟数（业务配置缺失时兜底） */
     private static final int DEFAULT_DELAY_MINUTES = 3;
+    /** 默认验证总轮次（业务配置缺失时兜底，1=只验一次） */
+    private static final int DEFAULT_VERIFY_TIMES = 1;
     /** verify_result 列长度上限 */
     private static final int RESULT_MAX_LEN = 500;
-    /** 补偿父日志的名称后缀：控制日志列表"名称"列一眼可辨 */
-    private static final String VERIFY_LOG_SUFFIX = "（持续验证补发）";
+    /** 补偿父日志的名称标识：控制日志列表"名称"列一眼可辨 */
+    private static final String VERIFY_LOG_TAG = "持续验证补发";
 
     private final ILightingPlanService planService;
     private final ILightingPlanExecuteLogService executeLogService;
@@ -108,7 +110,7 @@ public class LightingPlanVerifyServiceImpl implements ILightingPlanVerifyService
         // （必须处理：否则开关重新打开后，这些积压记录会拿"当时的灯状态"去比对旧执行结果，导致误补发）
         if (!isVerifyOn()) {
             for (LightingPlanExecuteLog row : dueList) {
-                finish(row, LightingPlanExecuteLog.VERIFY_SKIPPED, "持续验证已关闭，跳过");
+                finish(row, LightingPlanExecuteLog.VERIFY_SKIPPED, "持续验证已关闭，跳过", row.getVerifyCount());
             }
             log.info("【计划持续验证】全局开关已关闭，跳过 {} 条到期验证记录", dueList.size());
             return;
@@ -118,25 +120,32 @@ public class LightingPlanVerifyServiceImpl implements ILightingPlanVerifyService
                 verifyOne(row);
             } catch (Exception e) {
                 log.error("【计划持续验证】执行验证异常 logId={}, planId={}", row.getId(), row.getPlanId(), e);
-                finish(row, LightingPlanExecuteLog.VERIFY_SKIPPED, "验证执行异常: " + e.getMessage());
+                finish(row, LightingPlanExecuteLog.VERIFY_SKIPPED, "验证执行异常: " + e.getMessage(), row.getVerifyCount());
             }
         }
     }
 
     /**
-     * 对单条到期记录执行验证 + 按需补发
+     * 对单条到期记录执行**一轮**验证 + 按需补发；未到位且轮次未用尽时安排下一轮。
+     * <p>
+     * 轮次规则：总轮次取 business_config 的 {@code plan:verify:times}（缺省 1），每轮间隔取
+     * {@code plan:verify:delay:minutes}；任一轮复查"全部到位"即提前结束（不再无谓下发）。
+     * 每轮补发明细写控制日志（父"持续验证补发 第N/M轮" + 回路子记录），verify_result 只留摘要。
      */
     private void verifyOne(LightingPlanExecuteLog row) {
+        int times = getVerifyTimes();
+        int round = (row.getVerifyCount() == null ? 0 : row.getVerifyCount()) + 1;
         LightingPlan plan = planService.getById(row.getPlanId());
         if (plan == null) {
-            finish(row, LightingPlanExecuteLog.VERIFY_SKIPPED, "计划不存在，跳过验证");
+            finish(row, LightingPlanExecuteLog.VERIFY_SKIPPED, "计划不存在，跳过验证", row.getVerifyCount());
             return;
         }
         boolean expectOpen = LightingPlan.OPERATION_TYPE_OPEN.equals(plan.getOperationType());
 
         List<LightingCircuit> circuits = collectTargetCircuits(plan);
         if (circuits == null || circuits.isEmpty()) {
-            finish(row, LightingPlanExecuteLog.VERIFY_DONE, "无可用回路目标（可能仅含节目或目标已删除），未执行复查");
+            finish(row, LightingPlanExecuteLog.VERIFY_DONE,
+                    String.format("第%d/%d轮 无可用回路目标（可能仅含节目或目标已删除），未执行复查", round, times), round);
             return;
         }
 
@@ -155,39 +164,83 @@ public class LightingPlanVerifyServiceImpl implements ILightingPlanVerifyService
             }
         }
 
-        List<String> fixed = new ArrayList<>();
+        int fixedCount = 0;
         if (!toFix.isEmpty()) {
-            // 父日志：本次补偿的父记录（控制日志里显示"持续验证补发"），子记录挂其下；
+            // 父日志：本轮的补偿父记录（控制日志里显示"持续验证补发 第N/M轮"），子记录挂其下；
             // 写失败返回 null，此时回落为单参 open/close（日志问题不影响补发本身）
-            Long parentLogId = saveVerifyParentLog(plan, expectOpen);
-            for (Map.Entry<Long, String> entry : toFix.entrySet()) {
+            Long parentLogId = saveVerifyParentLog(plan, expectOpen, round, times);
+            for (Long circuitId : toFix.keySet()) {
                 try {
-                    controlCircuit(entry.getKey(), expectOpen, parentLogId);
-                    fixed.add(entry.getValue());
+                    controlCircuit(circuitId, expectOpen, parentLogId);
+                    fixedCount++;
                 } catch (Exception e) {
-                    log.error("【计划持续验证】补下发失败 circuitId={}, 期望={}", entry.getKey(), expectOpen ? "开启" : "关闭", e);
+                    log.error("【计划持续验证】补下发失败 circuitId={}, 期望={}", circuitId, expectOpen ? "开启" : "关闭", e);
                 }
             }
         }
 
-        String result;
         String expectLabel = expectOpen ? "开启" : "关闭";
-        if (fixed.isEmpty()) {
-            result = String.format("复查 %d 个回路，状态均已%s，无需补发", checked, expectLabel);
+        // verify_result 只记摘要：补了哪几个回路看控制日志子条目，避免 500 字符在多次验证时溢出
+        String roundResult = toFix.isEmpty()
+                ? String.format("第%d/%d轮 复查 %d 个回路，状态均已%s，无需补发", round, times, checked, expectLabel)
+                : String.format("第%d/%d轮 复查 %d 个回路，%d 个未%s，已补发 %d 个",
+                        round, times, checked, toFix.size(), expectLabel, fixedCount);
+
+        boolean allDone = toFix.isEmpty();
+        if (allDone || round >= times) {
+            String suffix = allDone && round < times ? "，已全部到位提前结束" : "";
+            finish(row, LightingPlanExecuteLog.VERIFY_DONE, roundResult + suffix, round);
+            log.info("【计划持续验证】planId={}, planName={} {} 轮完成（共 {} 轮上限）：{}",
+                    plan.getId(), plan.getPlanName(), round, times, roundResult);
         } else {
-            result = String.format("复查 %d 个回路，%d 个未%s，已补下发：%s",
-                    checked, fixed.size(), expectLabel, String.join("、", fixed));
+            scheduleNextRound(row, roundResult, round);
+            log.info("【计划持续验证】planId={}, planName={} 第{}/{}轮仍有未到位，{} 分钟后再验：{}",
+                    plan.getId(), plan.getPlanName(), round, times, getDelayMinutes(), roundResult);
         }
-        finish(row, LightingPlanExecuteLog.VERIFY_DONE, result);
-        log.info("【计划持续验证】planId={}, planName={} 复查完成：{}", plan.getId(), plan.getPlanName(), result);
+    }
+
+    /**
+     * 安排下一轮验证：仍置"待验证"，verify_time = now + 间隔，并累计已执行轮次
+     */
+    private void scheduleNextRound(LightingPlanExecuteLog row, String lastRoundResult, int finishedRound) {
+        try {
+            int delay = getDelayMinutes();
+            LightingPlanExecuteLog upd = new LightingPlanExecuteLog();
+            upd.setId(row.getId());
+            upd.setVerifyStatus(LightingPlanExecuteLog.VERIFY_PENDING);
+            upd.setVerifyResult(truncate(lastRoundResult + "，将于 " + delay + " 分钟后再验", RESULT_MAX_LEN));
+            upd.setVerifyCount(finishedRound);
+            upd.setVerifyTime(Date.from(LocalDateTime.now().plusMinutes(delay).atZone(ZoneId.systemDefault()).toInstant()));
+            upd.setUpdateTime(new Date());
+            executeLogService.updateById(upd);
+        } catch (Exception e) {
+            log.error("【计划持续验证】安排下一轮失败 logId={}", row.getId(), e);
+            finish(row, LightingPlanExecuteLog.VERIFY_SKIPPED, "安排下一轮验证失败: " + e.getMessage(), row.getVerifyCount());
+        }
+    }
+
+    /**
+     * 全局验证总轮次（含首次）：business_config 的 {@code plan:verify:times}。
+     * 缺省/填错/小于 1 一律按 1 处理（1 = 只验一次，与多次验证改造前一致）。
+     */
+    private int getVerifyTimes() {
+        try {
+            Long v = businessConfigService.getLongByKey(BusinessConfigConstant.PLAN_VERIFY_TIMES);
+            if (v != null && v >= 1) {
+                return v.intValue();
+            }
+        } catch (Exception e) {
+            log.warn("【计划持续验证】读取验证轮次配置失败，使用默认值 {} 轮", DEFAULT_VERIFY_TIMES, e);
+        }
+        return DEFAULT_VERIFY_TIMES;
     }
 
     /**
      * 写一条"持续验证补发"父日志（顶层），让补偿动作在控制日志里可辨认：
-     * 名称带"（持续验证补发）"后缀、**触发类型="持续验证"**（控制日志可直接按该值筛选）。
+     * 名称形如 {@code 计划名（持续验证补发 第1/3轮）}、**触发类型="持续验证"**（控制日志可直接按该值筛选）。
      * 写日志失败不影响补发，返回 null 由调用方回落为不带父日志的控制。
      */
-    private Long saveVerifyParentLog(LightingPlan plan, boolean expectOpen) {
+    private Long saveVerifyParentLog(LightingPlan plan, boolean expectOpen, int round, int times) {
         try {
             boolean isScenePlan = LightingPlan.REL_TYPE_SCENE.equals(plan.getRelType());
             LightingOperationLog logRow = new LightingOperationLog();
@@ -195,7 +248,7 @@ public class LightingPlanVerifyServiceImpl implements ILightingPlanVerifyService
             logRow.setParentId(null);
             logRow.setRelType(isScenePlan ? LightingPlan.REL_TYPE_SCENE : "定时任务");
             logRow.setRelId(plan.getId());
-            logRow.setName(plan.getPlanName() + VERIFY_LOG_SUFFIX);
+            logRow.setName(plan.getPlanName() + "（" + VERIFY_LOG_TAG + " 第" + round + "/" + times + "轮）");
             logRow.setOperationTime(LocalDateTime.now());
             logRow.setOperationType(expectOpen ? "开启" : "关闭");
             // 操作人与计划定时执行保持一致；补偿性质由"触发类型=持续验证"体现
@@ -313,12 +366,13 @@ public class LightingPlanVerifyServiceImpl implements ILightingPlanVerifyService
         return result;
     }
 
-    private void finish(LightingPlanExecuteLog row, String verifyStatus, String verifyResult) {
+    private void finish(LightingPlanExecuteLog row, String verifyStatus, String verifyResult, Integer verifyCount) {
         try {
             LightingPlanExecuteLog upd = new LightingPlanExecuteLog();
             upd.setId(row.getId());
             upd.setVerifyStatus(verifyStatus);
             upd.setVerifyResult(truncate(verifyResult, RESULT_MAX_LEN));
+            upd.setVerifyCount(verifyCount);
             upd.setUpdateTime(new Date());
             executeLogService.updateById(upd);
         } catch (Exception e) {

@@ -61,9 +61,17 @@ public class BusinessConfigConstant {
 
     /**
      * 计划"持续验证"延迟分钟数：计划定时执行成功后，延迟 N 分钟复查灯状态并对未达成的补下发（所有计划共用）。
+     * 多次验证时，该值同时作为**每轮之间的间隔**。
      * 直接填写数值，格式：3
      */
     public static final String PLAN_VERIFY_DELAY_MINUTES = "plan:verify:delay:minutes";
+
+    /**
+     * 计划"持续验证"总轮次（含首次）：直接填写数值，格式：3。
+     * 1 = 只验一次（与改造前一致）；>1 时每轮复查并补发，任一轮全部到位则提前结束。
+     * 缺省/填错/小于 1 一律按 1 处理。
+     */
+    public static final String PLAN_VERIFY_TIMES = "plan:verify:times";
 
 
 }
