@@ -53,6 +53,16 @@ public class LightingPlanVerifyServiceImpl implements ILightingPlanVerifyService
     private static final int RESULT_MAX_LEN = 500;
     /** 补偿父日志的名称标识：控制日志列表"名称"列一眼可辨 */
     private static final String VERIFY_LOG_TAG = "持续验证补发";
+    /** 复查通过日志的名称标识：本轮无回路需要补发时留痕，控制日志列表"名称"列一眼可辨 */
+    private static final String VERIFY_PASS_TAG = "持续验证复查通过";
+    /**
+     * 复查通过日志的操作类型。
+     * <p>
+     * 必须用"复查通过"这类**不含"开/关"字样**的写法：控制日志输出层会按
+     * {@code contains("关") / contains("开")} 把 operationType 简化成"关闭/开启"，
+     * 若写成"复查通过（期望开启）"就会被显示成"开启"，看起来像下发过一次控制，误导人。
+     */
+    private static final String VERIFY_PASS_OPERATION = "复查通过";
 
     private final ILightingPlanService planService;
     private final ILightingPlanExecuteLogService executeLogService;
@@ -130,7 +140,9 @@ public class LightingPlanVerifyServiceImpl implements ILightingPlanVerifyService
      * <p>
      * 轮次规则：总轮次取 business_config 的 {@code plan:verify:times}（缺省 1），每轮间隔取
      * {@code plan:verify:delay:minutes}；任一轮复查"全部到位"即提前结束（不再无谓下发）。
-     * 每轮补发明细写控制日志（父"持续验证补发 第N/M轮" + 回路子记录），verify_result 只留摘要。
+     * 每轮结果都在控制日志留痕（触发类型=持续验证）：有补发写父"持续验证补发 第N/M轮" + 回路子记录；
+     * 无需补发写一条"持续验证复查通过 第N/M轮"（无子记录），保证"跑过但没事可补"也查得到。
+     * verify_result 只留摘要（补了哪几个回路看控制日志子条目，避免 500 字符在多次验证时溢出）。
      */
     private void verifyOne(LightingPlanExecuteLog row) {
         int times = getVerifyTimes();
@@ -149,7 +161,7 @@ public class LightingPlanVerifyServiceImpl implements ILightingPlanVerifyService
             return;
         }
 
-        // 先挑出需要补发的回路：确认确实要补发后再写父日志，避免"复查无异常"也产生日志
+        // 先挑出需要补发的回路：有补发写"补发"父日志 + 回路子记录；无补发写一条"复查通过"（无子记录）
         Map<Long, String> toFix = new LinkedHashMap<>();
         int checked = 0;
         for (LightingCircuit c : circuits) {
@@ -177,6 +189,10 @@ public class LightingPlanVerifyServiceImpl implements ILightingPlanVerifyService
                     log.error("【计划持续验证】补下发失败 circuitId={}, 期望={}", circuitId, expectOpen ? "开启" : "关闭", e);
                 }
             }
+        } else {
+            // 复查通过（本轮没有任何回路需要补发）：留一条"复查通过"日志，
+            // 让"第N轮确实跑过、且无需补发"在控制日志里可见（否则只存在于 verify_result，控制日志查不到）
+            saveVerifyPassLog(plan, round, times, checked, expectOpen);
         }
 
         String expectLabel = expectOpen ? "开启" : "关闭";
@@ -260,6 +276,37 @@ public class LightingPlanVerifyServiceImpl implements ILightingPlanVerifyService
         } catch (Exception e) {
             log.error("【计划持续验证】写补偿父日志失败 planId={}，本次补发不带父日志", plan.getId(), e);
             return null;
+        }
+    }
+
+    /**
+     * 写一条"复查通过"日志（顶层，**无子记录**）：本轮复查全部到位、未做任何补发时留痕。
+     * <p>
+     * 目的：让"第N轮跑过且无需补发"这件事在控制日志里也能查到——此前只有补发才有日志，
+     * 于是"第2轮明明执行了（verify_result 已写）却在控制日志里没有任何痕迹"，容易被误判成没执行。
+     * <p>
+     * 名称形如 {@code 计划名（持续验证复查通过 第2/2轮：复查 8 个回路均已开启）}，
+     * **触发类型="持续验证"**（可筛选）；操作类型固定"复查通过"（见 {@link #VERIFY_PASS_OPERATION} 注释）。
+     * 写日志失败只记错误日志，不影响验证结果与轮次推进。
+     */
+    private void saveVerifyPassLog(LightingPlan plan, int round, int times, int checked, boolean expectOpen) {
+        try {
+            boolean isScenePlan = LightingPlan.REL_TYPE_SCENE.equals(plan.getRelType());
+            LightingOperationLog logRow = new LightingOperationLog();
+            logRow.setLogType(isScenePlan ? LightingOperationLog.LOG_TYPE_SCENE_PLAN : LightingOperationLog.LOG_TYPE_PLAN);
+            logRow.setParentId(null);
+            logRow.setRelType(isScenePlan ? LightingPlan.REL_TYPE_SCENE : "定时任务");
+            logRow.setRelId(plan.getId());
+            logRow.setName(plan.getPlanName() + "（" + VERIFY_PASS_TAG + " 第" + round + "/" + times + "轮：复查 "
+                    + checked + " 个回路均已" + (expectOpen ? "开启" : "关闭") + "）");
+            logRow.setOperationTime(LocalDateTime.now());
+            logRow.setOperationType(VERIFY_PASS_OPERATION);
+            // 与补偿日志同口径：操作人固定"照明计划"，性质由"触发类型=持续验证"体现
+            logRow.setOperationBy("照明计划");
+            logRow.setOperatorType(LightingOperationLog.OPERATOR_TYPE_VERIFY);
+            lightingOperationLogService.save(logRow);
+        } catch (Exception e) {
+            log.error("【计划持续验证】写复查通过日志失败 planId={}，不影响验证结果", plan.getId(), e);
         }
     }
 
