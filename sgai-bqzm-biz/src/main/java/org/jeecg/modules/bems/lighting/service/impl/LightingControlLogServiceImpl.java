@@ -10,9 +10,9 @@ import org.jeecg.common.util.oConvertUtils;
 import org.jeecg.modules.bems.lighting.entity.LightingControlLog;
 import org.jeecg.modules.bems.lighting.mapper.LightingControlLogMapper;
 import org.jeecg.modules.bems.lighting.service.ILightingControlLogService;
+import org.jeecg.modules.bems.lighting.util.LightingIpUtils;
 import org.springframework.stereotype.Service;
 
-import javax.servlet.http.HttpServletRequest;
 import java.time.LocalDateTime;
 
 @Service
@@ -44,7 +44,7 @@ public class LightingControlLogServiceImpl extends ServiceImpl<LightingControlLo
             String username = getCurrentUsername();
             log.setOperatorBy(username);
             log.setOperatorName(username);
-            log.setIpAddress(getIpAddr());
+            log.setIpAddress(LightingIpUtils.getIpAddr());
         } else {
             log.setOperatorBy("system");
             log.setOperatorName("系统自动");
@@ -67,32 +67,5 @@ public class LightingControlLogServiceImpl extends ServiceImpl<LightingControlLo
             // ignore
         }
         return "system";
-    }
-
-    private HttpServletRequest getRequest() {
-        try {
-            return org.springframework.web.context.request.RequestContextHolder.currentRequestAttributes() != null ?
-                    ((org.springframework.web.context.request.ServletRequestAttributes) org.springframework.web.context.request.RequestContextHolder.currentRequestAttributes()).getRequest() : null;
-        } catch (Exception e) {
-            return null;
-        }
-    }
-
-    private String getIpAddr() {
-        HttpServletRequest request = getRequest();
-        if (request == null) {
-            return "127.0.0.1";
-        }
-        String ip = request.getHeader("x-forwarded-for");
-        if (ip == null || ip.length() == 0 || "unknown".equalsIgnoreCase(ip)) {
-            ip = request.getHeader("Proxy-Client-IP");
-        }
-        if (ip == null || ip.length() == 0 || "unknown".equalsIgnoreCase(ip)) {
-            ip = request.getHeader("WL-Proxy-Client-IP");
-        }
-        if (ip == null || ip.length() == 0 || "unknown".equalsIgnoreCase(ip)) {
-            ip = request.getRemoteAddr();
-        }
-        return ip;
     }
 }

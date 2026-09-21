@@ -4,7 +4,9 @@ import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import lombok.AllArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.apache.commons.lang3.StringUtils;
+import org.jeecg.modules.bems.constant.BusinessConfigConstant;
 import org.jeecg.modules.bems.lighting.entity.LightingCircuit;
+import org.jeecg.modules.bems.lighting.entity.LightingOperationLog;
 import org.jeecg.modules.bems.lighting.entity.LightingPlan;
 import org.jeecg.modules.bems.lighting.entity.LightingPlanExecuteLog;
 import org.jeecg.modules.bems.lighting.entity.LightingScene;
@@ -12,6 +14,7 @@ import org.jeecg.modules.bems.lighting.entity.LightingSceneDetail;
 import org.jeecg.modules.bems.lighting.mapper.LightingSceneDetailMapper;
 import org.jeecg.modules.bems.lighting.service.IBusinessConfigService;
 import org.jeecg.modules.bems.lighting.service.ILightingCircuitService;
+import org.jeecg.modules.bems.lighting.service.ILightingOperationLogService;
 import org.jeecg.modules.bems.lighting.service.ILightingPlanExecuteLogService;
 import org.jeecg.modules.bems.lighting.service.ILightingPlanService;
 import org.jeecg.modules.bems.lighting.service.ILightingPlanVerifyService;
@@ -23,7 +26,9 @@ import java.time.ZoneId;
 import java.util.ArrayList;
 import java.util.Date;
 import java.util.HashSet;
+import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Map;
 import java.util.Set;
 
 /**
@@ -38,12 +43,14 @@ import java.util.Set;
 @AllArgsConstructor
 public class LightingPlanVerifyServiceImpl implements ILightingPlanVerifyService {
 
-    /** 业务配置 key：持续验证延迟分钟数（所有计划共用） */
-    private static final String CONFIG_KEY_DELAY_MINUTES = "plan:verify:delay:minutes";
+    /** 全局开关值：只有配成这两个字才算开启 */
+    private static final String SWITCH_ON = "开启";
     /** 默认延迟分钟数（业务配置缺失时兜底） */
     private static final int DEFAULT_DELAY_MINUTES = 3;
     /** verify_result 列长度上限 */
     private static final int RESULT_MAX_LEN = 500;
+    /** 补偿父日志的名称后缀：控制日志列表"名称"列一眼可辨 */
+    private static final String VERIFY_LOG_SUFFIX = "（持续验证补发）";
 
     private final ILightingPlanService planService;
     private final ILightingPlanExecuteLogService executeLogService;
@@ -51,17 +58,18 @@ public class LightingPlanVerifyServiceImpl implements ILightingPlanVerifyService
     private final ILightingSceneService sceneService;
     private final LightingSceneDetailMapper sceneDetailMapper;
     private final IBusinessConfigService businessConfigService;
+    private final ILightingOperationLogService lightingOperationLogService;
 
     @Override
     public void registerVerify(Long planId, String version, String executeDate) {
         if (planId == null) {
             return;
         }
+        // 全局开关：关闭（含未配置/填错/读取异常）时不登记，相当于整个功能未启用
+        if (!isVerifyOn()) {
+            return;
+        }
         try {
-            LightingPlan plan = planService.getById(planId);
-            if (plan == null || !isVerifyEnabled(plan)) {
-                return;
-            }
             // 定位本次执行的日志行（最新一条）
             LightingPlanExecuteLog logRow = executeLogService.getOne(new LambdaQueryWrapper<LightingPlanExecuteLog>()
                     .eq(LightingPlanExecuteLog::getPlanId, planId)
@@ -96,6 +104,15 @@ public class LightingPlanVerifyServiceImpl implements ILightingPlanVerifyService
         if (dueList == null || dueList.isEmpty()) {
             return;
         }
+        // 全局开关关闭：不复查，把到期的"待验证"直接置"已跳过"。
+        // （必须处理：否则开关重新打开后，这些积压记录会拿"当时的灯状态"去比对旧执行结果，导致误补发）
+        if (!isVerifyOn()) {
+            for (LightingPlanExecuteLog row : dueList) {
+                finish(row, LightingPlanExecuteLog.VERIFY_SKIPPED, "持续验证已关闭，跳过");
+            }
+            log.info("【计划持续验证】全局开关已关闭，跳过 {} 条到期验证记录", dueList.size());
+            return;
+        }
         for (LightingPlanExecuteLog row : dueList) {
             try {
                 verifyOne(row);
@@ -123,7 +140,8 @@ public class LightingPlanVerifyServiceImpl implements ILightingPlanVerifyService
             return;
         }
 
-        List<String> fixed = new ArrayList<>();
+        // 先挑出需要补发的回路：确认确实要补发后再写父日志，避免"复查无异常"也产生日志
+        Map<Long, String> toFix = new LinkedHashMap<>();
         int checked = 0;
         for (LightingCircuit c : circuits) {
             if (c == null || c.getId() == null) {
@@ -132,20 +150,23 @@ public class LightingPlanVerifyServiceImpl implements ILightingPlanVerifyService
             checked++;
             boolean isOn = LightingCircuit.STATUS_ON.equals(c.getStatus());
             boolean needFix = expectOpen ? !isOn : isOn;
-            if (!needFix) {
-                continue;
+            if (needFix) {
+                toFix.put(c.getId(), circuitName(c));
             }
-            String name = StringUtils.isNotEmpty(c.getCircuitName()) ? c.getCircuitName()
-                    : (StringUtils.isNotEmpty(c.getCircuitCode()) ? c.getCircuitCode() : String.valueOf(c.getId()));
-            try {
-                if (expectOpen) {
-                    circuitService.open(c.getId());
-                } else {
-                    circuitService.close(c.getId());
+        }
+
+        List<String> fixed = new ArrayList<>();
+        if (!toFix.isEmpty()) {
+            // 父日志：本次补偿的父记录（控制日志里显示"持续验证补发"），子记录挂其下；
+            // 写失败返回 null，此时回落为单参 open/close（日志问题不影响补发本身）
+            Long parentLogId = saveVerifyParentLog(plan, expectOpen);
+            for (Map.Entry<Long, String> entry : toFix.entrySet()) {
+                try {
+                    controlCircuit(entry.getKey(), expectOpen, parentLogId);
+                    fixed.add(entry.getValue());
+                } catch (Exception e) {
+                    log.error("【计划持续验证】补下发失败 circuitId={}, 期望={}", entry.getKey(), expectOpen ? "开启" : "关闭", e);
                 }
-                fixed.add(name);
-            } catch (Exception e) {
-                log.error("【计划持续验证】补下发失败 circuitId={}, 期望={}", c.getId(), expectOpen ? "开启" : "关闭", e);
             }
         }
 
@@ -159,6 +180,61 @@ public class LightingPlanVerifyServiceImpl implements ILightingPlanVerifyService
         }
         finish(row, LightingPlanExecuteLog.VERIFY_DONE, result);
         log.info("【计划持续验证】planId={}, planName={} 复查完成：{}", plan.getId(), plan.getPlanName(), result);
+    }
+
+    /**
+     * 写一条"持续验证补发"父日志（顶层），让补偿动作在控制日志里可辨认：
+     * 名称带"（持续验证补发）"后缀、**触发类型="持续验证"**（控制日志可直接按该值筛选）。
+     * 写日志失败不影响补发，返回 null 由调用方回落为不带父日志的控制。
+     */
+    private Long saveVerifyParentLog(LightingPlan plan, boolean expectOpen) {
+        try {
+            boolean isScenePlan = LightingPlan.REL_TYPE_SCENE.equals(plan.getRelType());
+            LightingOperationLog logRow = new LightingOperationLog();
+            logRow.setLogType(isScenePlan ? LightingOperationLog.LOG_TYPE_SCENE_PLAN : LightingOperationLog.LOG_TYPE_PLAN);
+            logRow.setParentId(null);
+            logRow.setRelType(isScenePlan ? LightingPlan.REL_TYPE_SCENE : "定时任务");
+            logRow.setRelId(plan.getId());
+            logRow.setName(plan.getPlanName() + VERIFY_LOG_SUFFIX);
+            logRow.setOperationTime(LocalDateTime.now());
+            logRow.setOperationType(expectOpen ? "开启" : "关闭");
+            // 操作人与计划定时执行保持一致；补偿性质由"触发类型=持续验证"体现
+            logRow.setOperationBy("照明计划");
+            // 子回路日志通过 resolveOperatorType(parentId) 继承该值，同样是"持续验证"
+            logRow.setOperatorType(LightingOperationLog.OPERATOR_TYPE_VERIFY);
+            lightingOperationLogService.save(logRow);
+            return logRow.getId();
+        } catch (Exception e) {
+            log.error("【计划持续验证】写补偿父日志失败 planId={}，本次补发不带父日志", plan.getId(), e);
+            return null;
+        }
+    }
+
+    /**
+     * 补发单个回路：有父日志时挂到父日志下（控制日志可追溯），父日志缺失时回落为直接控制
+     */
+    private void controlCircuit(Long circuitId, boolean expectOpen, Long parentLogId) {
+        if (expectOpen) {
+            if (parentLogId == null) {
+                circuitService.open(circuitId);
+            } else {
+                circuitService.open(circuitId, parentLogId);
+            }
+        } else {
+            if (parentLogId == null) {
+                circuitService.close(circuitId);
+            } else {
+                circuitService.close(circuitId, parentLogId);
+            }
+        }
+    }
+
+    /**
+     * 回路展示名：回路名称 → 回路编码 → ID
+     */
+    private String circuitName(LightingCircuit circuit) {
+        return StringUtils.isNotEmpty(circuit.getCircuitName()) ? circuit.getCircuitName()
+                : (StringUtils.isNotEmpty(circuit.getCircuitCode()) ? circuit.getCircuitCode() : String.valueOf(circuit.getId()));
     }
 
     /**
@@ -250,13 +326,23 @@ public class LightingPlanVerifyServiceImpl implements ILightingPlanVerifyService
         }
     }
 
-    private boolean isVerifyEnabled(LightingPlan plan) {
-        return plan.getVerifyAfterExecute() != null && plan.getVerifyAfterExecute() == 1;
+    /**
+     * 全局持续验证开关（business_config: plan:verify:enabled）。
+     * 只认"开启"两字：填"关闭"、留空、填错、读取异常一律视为关闭。
+     */
+    private boolean isVerifyOn() {
+        try {
+            String value = businessConfigService.getValueByKey(BusinessConfigConstant.PLAN_VERIFY_ENABLED);
+            return SWITCH_ON.equals(StringUtils.trimToEmpty(value));
+        } catch (Exception e) {
+            log.warn("【计划持续验证】读取全局开关失败，按关闭处理", e);
+            return false;
+        }
     }
 
     private int getDelayMinutes() {
         try {
-            Long v = businessConfigService.getLongByKey(CONFIG_KEY_DELAY_MINUTES);
+            Long v = businessConfigService.getLongByKey(BusinessConfigConstant.PLAN_VERIFY_DELAY_MINUTES);
             if (v != null && v >= 0) {
                 return v.intValue();
             }

@@ -68,6 +68,10 @@ public class LightingOperationLog {
      * 操作类型（operatorType）：场景（场景一键执行）
      */
     public static final String OPERATOR_TYPE_SCENE = "场景";
+    /**
+     * 操作类型（operatorType）：持续验证（计划执行后的补偿复查与补发）
+     */
+    public static final String OPERATOR_TYPE_VERIFY = "持续验证";
 
     /**
      * 主键（雪花ID，JSON 序列化为字符串避免前端精度丢失）

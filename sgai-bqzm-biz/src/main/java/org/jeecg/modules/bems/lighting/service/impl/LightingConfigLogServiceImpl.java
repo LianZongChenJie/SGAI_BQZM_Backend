@@ -12,9 +12,9 @@ import org.jeecg.modules.bems.lighting.dto.LightingConfigLogQueryDto;
 import org.jeecg.modules.bems.lighting.entity.LightingConfigLog;
 import org.jeecg.modules.bems.lighting.mapper.LightingConfigLogMapper;
 import org.jeecg.modules.bems.lighting.service.ILightingConfigLogService;
+import org.jeecg.modules.bems.lighting.util.LightingIpUtils;
 import org.springframework.stereotype.Service;
 
-import javax.servlet.http.HttpServletRequest;
 import java.time.LocalDateTime;
 
 @Slf4j
@@ -66,8 +66,8 @@ public class LightingConfigLogServiceImpl extends ServiceImpl<LightingConfigLogM
             String username = getCurrentUsername();
             configLog.setOperBy(truncate(username, 50));
             configLog.setOperName(truncate(getCurrentRealname(username), 50));
-            // 获取IP地址
-            configLog.setIpAddress(truncate(getIpAddr(), 50));
+            // 获取IP地址（反代场景依赖 nginx 透传 X-Real-IP / X-Forwarded-For，见 LightingIpUtils）
+            configLog.setIpAddress(truncate(LightingIpUtils.getIpAddr(), 50));
             super.save(configLog);
         } catch (Exception e) {
             // 不抛出：保证业务不受影响，仅记录错误日志便于排查
@@ -123,32 +123,5 @@ public class LightingConfigLogServiceImpl extends ServiceImpl<LightingConfigLogM
             // ignore：姓名仅用于展示，取不到用账号兜底
         }
         return fallback;
-    }
-
-    private HttpServletRequest getRequest() {
-        try {
-            return org.springframework.web.context.request.RequestContextHolder.currentRequestAttributes() != null ?
-                    ((org.springframework.web.context.request.ServletRequestAttributes) org.springframework.web.context.request.RequestContextHolder.currentRequestAttributes()).getRequest() : null;
-        } catch (Exception e) {
-            return null;
-        }
-    }
-
-    private String getIpAddr() {
-        HttpServletRequest request = getRequest();
-        if (request == null) {
-            return "127.0.0.1";
-        }
-        String ip = request.getHeader("x-forwarded-for");
-        if (ip == null || ip.length() == 0 || "unknown".equalsIgnoreCase(ip)) {
-            ip = request.getHeader("Proxy-Client-IP");
-        }
-        if (ip == null || ip.length() == 0 || "unknown".equalsIgnoreCase(ip)) {
-            ip = request.getHeader("WL-Proxy-Client-IP");
-        }
-        if (ip == null || ip.length() == 0 || "unknown".equalsIgnoreCase(ip)) {
-            ip = request.getRemoteAddr();
-        }
-        return ip;
     }
 }

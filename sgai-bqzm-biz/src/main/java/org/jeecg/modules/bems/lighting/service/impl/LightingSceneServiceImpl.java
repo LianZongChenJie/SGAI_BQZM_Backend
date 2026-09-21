@@ -87,6 +87,12 @@ public class LightingSceneServiceImpl extends ServiceImpl<LightingSceneMapper, L
      */
     private final ILightingConfigLogService lightingConfigLogService;
 
+    /**
+     * 配置日志内容换行符（oper_content 是 TEXT，可存多行）：
+     * 每条日志按"动作行 + 每字段一行"输出，便于管理端直接展示。
+     */
+    private static final String LINE = "\n";
+
     @Override
     public IPage<LightingPlan> listPage(LightingSceneQueryDto params) {
         // 名称过滤兼容前端只换 URL：planName 与 sceneName 等价，取任一非空值
@@ -433,9 +439,9 @@ public class LightingSceneServiceImpl extends ServiceImpl<LightingSceneMapper, L
         scene.setProgramSceneIds(dto.getProgramSceneIds());
         super.save(scene);
         saveDetails(scene.getId(), dto.getDetails());
-        // 配置操作日志
+        // 配置操作日志（完整快照：把整个场景留档，便于事后回溯被删/被改前的配置）
         lightingConfigLogService.saveLog("新增", "场景配置", "场景", scene.getId(), scene.getSceneName(),
-                "新增场景；控制目标：" + describeDetails(dto.getDetails()));
+                "新增场景" + LINE + describeSceneSnapshot(scene, dto.getDetails()));
     }
 
     @Override
@@ -468,8 +474,9 @@ public class LightingSceneServiceImpl extends ServiceImpl<LightingSceneMapper, L
         detailMapper.delete(new LambdaQueryWrapper<LightingSceneDetail>().eq(LightingSceneDetail::getSceneId, dto.getId()));
         saveDetails(dto.getId(), dto.getDetails());
         // 配置操作日志（记录"旧值 → 新值"，含明细增删与动作变化）
+        // 动作行带上对象名：修改日志只列变化项，名称本身未必出现在变更项里，前缀名称便于一眼看出改的是哪个场景
         lightingConfigLogService.saveLog("修改", "场景配置", "场景", dto.getId(), scene.getSceneName(),
-                buildSceneDiff(old, oldDetails, scene, dto.getDetails()));
+                "修改场景：" + scene.getSceneName() + LINE + buildSceneDiff(old, oldDetails, scene, dto.getDetails()));
     }
 
     @Override
@@ -489,9 +496,9 @@ public class LightingSceneServiceImpl extends ServiceImpl<LightingSceneMapper, L
                 new LambdaQueryWrapper<LightingSceneDetail>().eq(LightingSceneDetail::getSceneId, id));
         detailMapper.delete(new LambdaQueryWrapper<LightingSceneDetail>().eq(LightingSceneDetail::getSceneId, id));
         super.removeById(id);
-        // 配置操作日志
+        // 配置操作日志（完整快照：场景被删后这些字段再也查不到，日志要一次留全）
         lightingConfigLogService.saveLog("删除", "场景配置", "场景", id, scene.getSceneName(),
-                "删除场景；原控制目标：" + describeDetails(details));
+                "删除场景" + LINE + describeSceneSnapshot(scene, details));
     }
 
     /**
@@ -959,8 +966,12 @@ public class LightingSceneServiceImpl extends ServiceImpl<LightingSceneMapper, L
     // ==================== 配置操作日志：内容拼装 ====================
 
     /**
-     * 拼接场景修改内容（旧值 → 新值），如：
-     * 名称：A → B；标签：服贸会 → 领导参观；新增目标：区域：3号馆2F；移除目标：回路：BQ-12-03
+     * 拼接场景修改内容（旧值 → 新值，每项一行），如：
+     * 名称：A → B
+     * 标签：服贸会 → 领导参观
+     * 新增目标：区域 3号馆2F
+     * 移除目标：回路 BQ-12-03
+     * 动作变化：区域 3号馆2F：开启 → 关闭
      */
     private String buildSceneDiff(LightingScene old, List<LightingSceneDetail> oldDetails,
                                   LightingScene now, List<LightingSceneDetail> newDetails) {
@@ -972,7 +983,36 @@ public class LightingSceneServiceImpl extends ServiceImpl<LightingSceneMapper, L
         appendChange(changes, "关联节目", old.getProgramSceneIds(), now.getProgramSceneIds());
         appendChange(changes, "备注", old.getRemark(), now.getRemark());
         appendDetailDiff(changes, oldDetails, newDetails);
-        return changes.isEmpty() ? "无字段变更" : String.join("；", changes);
+        return changes.isEmpty() ? "无字段变更" : String.join(LINE, changes);
+    }
+
+    /**
+     * 场景完整快照（新增/删除时留档整个场景），每个字段一行。如：
+     * 名称：服贸会全部
+     * 场景类型：普通场景
+     * 标签：服贸会
+     * 关联节目：1001,1002
+     * 控制目标：区域：建筑三焦炉一层泛光（开启）
+     * <p>
+     * 不含"类别"与"备注"：前端新建/编辑场景表单没有这两个字段、界面无从设置，
+     * 库内实测恒为空（remark 14 个场景全为空；category 仅初始化脚本写过"一键开关"，
+     * 而那类场景 delete() 已拦下不允许删除），写进日志只会多出两行恒为空的内容。
+     */
+    private String describeSceneSnapshot(LightingScene scene, List<LightingSceneDetail> details) {
+        List<String> lines = new ArrayList<>();
+        lines.add("名称：" + blankToText(scene.getSceneName()));
+        lines.add("场景类型：" + blankToText(scene.getSceneType()));
+        lines.add("标签：" + blankToText(scene.getTagName()));
+        lines.add("关联节目：" + blankToText(scene.getProgramSceneIds()));
+        lines.add("控制目标：" + describeDetails(details));
+        return String.join(LINE, lines);
+    }
+
+    /**
+     * 空值展示为"空"，保证完整快照里字段不缺失
+     */
+    private String blankToText(String value) {
+        return StringUtils.isEmpty(value) ? "空" : value;
     }
 
     /**

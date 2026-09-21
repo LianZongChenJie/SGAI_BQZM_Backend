@@ -188,10 +188,10 @@ public class LightingPlanServiceImpl extends ServiceImpl<LightingPlanMapper, Lig
         // 按关联类型计算并填充片区id
         plan.setDistrictId(computeDistrictId(plan));
         super.save(plan);
-        // 配置操作日志（新增时执行时间只在 lighting_plan 上，生效窗口/执行星期在"启用"时才落库，故此处为不限）
+        // 配置操作日志（新增时执行时间/生效窗口/执行星期都还没配，用"新增专用快照"避免输出恒为"空/不限/不限"的三行）
         lightingConfigLogService.saveLog("新增", "定时控制", "定时任务", plan.getId(), plan.getPlanName(),
-                "新增定时任务；" + lightingPlanLogText.describe(
-                        lightingPlanLogText.snapshot(plan, plan.getExecutionTime(), null, null, null)));
+                "新增定时任务" + LightingPlanLogText.L + lightingPlanLogText.describe(
+                        lightingPlanLogText.snapshotForAdd(plan)));
     }
 
     /**
@@ -268,8 +268,9 @@ public class LightingPlanServiceImpl extends ServiceImpl<LightingPlanMapper, Lig
         LightingPlan latest = super.getById(plan.getId());
         LightingPlan afterPlan = latest != null ? latest : plan;
         Map<String, String> after = lightingPlanLogText.snapshot(afterPlan, afterPlan.getExecutionTime(), startDate, endDate, enabledWeek);
+        // 动作行带上对象名：修改日志只列变化项，名称本身未必出现在变更项里，前缀名称便于一眼看出改的是哪个任务
         lightingConfigLogService.saveLog("修改", "定时控制", "定时任务", afterPlan.getId(), afterPlan.getPlanName(),
-                lightingPlanLogText.diff(before, after));
+                "修改定时任务：" + afterPlan.getPlanName() + LightingPlanLogText.L + lightingPlanLogText.diff(before, after));
     }
 
     @Override
@@ -278,7 +279,7 @@ public class LightingPlanServiceImpl extends ServiceImpl<LightingPlanMapper, Lig
         LightingPlan plan = super.getById(id);
         // 删除前取出执行时间配置并拼好配置日志内容（删除后无法再查）
         LightingPlanExecutionTime et = executionTimeService.getByPlanId(id);
-        String deleteContent = plan == null ? null : "删除定时任务；" + lightingPlanLogText.describe(
+        String deleteContent = plan == null ? null : "删除定时任务" + LightingPlanLogText.L + lightingPlanLogText.describe(
                 lightingPlanLogText.snapshot(plan, plan.getExecutionTime(),
                         et == null ? null : et.getStartDate(),
                         et == null ? null : et.getEndDate(),
@@ -410,7 +411,7 @@ public class LightingPlanServiceImpl extends ServiceImpl<LightingPlanMapper, Lig
         plan.setExecutionTime(data.getExecutionTime());
         // 配置操作日志（启用）
         lightingConfigLogService.saveLog("修改", "定时控制", "定时任务", plan.getId(), plan.getPlanName(),
-                "启用定时任务；" + lightingPlanLogText.describe(
+                "启用定时任务" + LightingPlanLogText.L + lightingPlanLogText.describe(
                         lightingPlanLogText.snapshot(plan, data.getExecutionTime(),
                                 data.getStartDate(), data.getEndDate(), data.getEnabledWeek())));
         // 判断下次执行时间
@@ -444,7 +445,14 @@ public class LightingPlanServiceImpl extends ServiceImpl<LightingPlanMapper, Lig
         plan.setStatus(LightingPlan.STATUS_DISABLE);
         super.updateById(plan);
         // 配置操作日志（停用；重复停用上面已 return，不会重复记）
-        lightingConfigLogService.saveLog("修改", "定时控制", "定时任务", plan.getId(), plan.getPlanName(), "停用定时任务");
+        // 与"启用"同口径输出完整快照：停用后无法再从入参拿到执行配置，故从 lighting_plan_execution_time 取
+        LightingPlanExecutionTime et = executionTimeService.getByPlanId(id);
+        lightingConfigLogService.saveLog("修改", "定时控制", "定时任务", plan.getId(), plan.getPlanName(),
+                "停用定时任务" + LightingPlanLogText.L + lightingPlanLogText.describe(
+                        lightingPlanLogText.snapshot(plan, plan.getExecutionTime(),
+                                et == null ? null : et.getStartDate(),
+                                et == null ? null : et.getEndDate(),
+                                et == null ? null : et.getEnabledWeek())));
     }
 
     private void executeArea(Collection<Long> areaIds, String operationType, Long parentId){
