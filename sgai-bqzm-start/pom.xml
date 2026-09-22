@@ -18,6 +18,22 @@
         <dependency>
             <groupId>org.jeecgframework.boot</groupId>
             <artifactId>sgai-system-cloud-api</artifactId>
+            <exclusions>
+                <!--
+                    排除 JeecgBoot 自带的 MongoDB（jeecg-boot-starter-mongon 由 sgai-system-cloud-api 传递引入）。
+                    本服务对 Mongo 零使用（全仓无 MongoTemplate/MongoRepository 引用，starter 内仅
+                    MongoConvertConfig / CommonMongoDataImpl 两个类会被 org.jeecg 包扫描注册）。
+                    排除原因：其连接串仍是 JeecgBoot 默认的 docker-compose 服务名 jeecg-boot-mongo:27017，
+                    在服务器上无法解析，导致 MongoClient 的后台监控线程每 10 秒刷一条
+                    "Exception in monitor thread while connecting to server jeecg-boot-mongo:27017"(INFO) 日志。
+                    注意：不能只写 spring.autoconfigure.exclude —— MongoConvertConfig/CommonMongoDataImpl
+                    仍会被组件扫描，CommonMongoDataImpl 强依赖 MongoTemplate bean，会导致启动失败。
+                -->
+                <exclusion>
+                    <groupId>org.jeecgframework.boot</groupId>
+                    <artifactId>jeecg-boot-starter-mongon</artifactId>
+                </exclusion>
+            </exclusions>
         </dependency>
         
         <!--引入业务模块-->
