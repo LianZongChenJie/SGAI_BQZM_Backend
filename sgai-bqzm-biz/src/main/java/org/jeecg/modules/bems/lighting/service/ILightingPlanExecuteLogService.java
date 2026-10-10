@@ -19,8 +19,12 @@ public interface ILightingPlanExecuteLogService extends IService<LightingPlanExe
 
     /**
      * 记录 MQ 消息消费结果：
-     * 优先将 (planId, version, executeDate) 下最新一条 待消费 记录更新为结果；
-     * 若无匹配记录（如历史消息），补插一条结果记录，保证日历状态可查。
+     * <ol>
+     *   <li>优先将 (planId, version, executeDate) 下最新一条 待消费 记录更新为结果（名称/执行时间/发送时间保留）；</li>
+     *   <li>没有待消费记录时（计划已删除导致发送记录被清理 / 历史消息 / 记录写库失败 / 消息重复投递），
+     *       仅当**计划仍存在**且**尚无同批次结果记录**时才补插一条，并补全 planName 与 executionTime；
+     *       计划已删除则直接跳过，避免日历上产生「00:00:00 关灯【计划id】」这类无法辨认的脏数据。</li>
+     * </ol>
      *
      * @param planId      计划ID
      * @param version     计划版本号

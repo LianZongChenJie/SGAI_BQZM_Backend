@@ -20,7 +20,6 @@ import org.jeecg.modules.bems.lighting.entity.LightingArea;
 import org.jeecg.modules.bems.lighting.entity.LightingCircuit;
 import org.jeecg.modules.bems.lighting.entity.LightingOperationLog;
 import org.jeecg.modules.bems.lighting.entity.LightingPlan;
-import org.jeecg.modules.bems.lighting.entity.LightingPlanExecuteLog;
 import org.jeecg.modules.bems.lighting.entity.LightingPlanExecutionTime;
 import org.jeecg.modules.bems.lighting.entity.LightingProgram;
 import org.jeecg.modules.bems.lighting.entity.LightingScene;
@@ -66,8 +65,6 @@ public class LightingPlanServiceImpl extends ServiceImpl<LightingPlanMapper, Lig
     private final ILightingProgramService lightingProgramService;
 
     private final ILightingOperationLogService lightingOperationLogService;
-
-    private final ILightingPlanExecuteLogService lightingPlanExecuteLogService;
 
     private final LightingSceneDetailMapper lightingSceneDetailMapper;
 
@@ -295,8 +292,10 @@ public class LightingPlanServiceImpl extends ServiceImpl<LightingPlanMapper, Lig
         }
         // 同步删除执行时间配置，避免孤儿数据
         executionTimeService.remove(new LambdaQueryWrapper<LightingPlanExecutionTime>().eq(LightingPlanExecutionTime::getPlanId, id));
-        // 同步删除执行日志，避免孤儿数据
-        lightingPlanExecuteLogService.remove(new LambdaQueryWrapper<LightingPlanExecuteLog>().eq(LightingPlanExecuteLog::getPlanId, id));
+        // 注意：**不再删除执行日志 lighting_plan_execute_log**。
+        // 控制日历"被删除任务的历史"就是靠这张表展示的（LightingCalendarController#loadHistoryExecuteLogEvents），
+        // 原来在这里连带删除，会导致"删除定时任务 → 历史一起消失"。历史属于事实记录，删除动作不应销毁它；
+        // 若确需清理某批历史，按数据修复单独处理（出脚本、受控执行），不要在删除流程里捎带。
         super.removeById(id);
         // 配置操作日志
         if (plan != null) {
