@@ -5,11 +5,13 @@ rem
 rem Usage:
 rem   1) run a SQL file on local db (default):
 rem        run_sql.bat <sql-file-path>
-rem   2) run a SQL file on 51 db:
+rem   2) run a SQL file on dev db (192.168.204.17:5238, 原 192.168.204.109):
+rem        run_sql.bat <sql-file-path> -db=17      (或 -db=109，等价)
+rem   3) run a SQL file on 51 db (已停用):
 rem        run_sql.bat <sql-file-path> -db=51
-rem   3) run a SQL file on production db:
+rem   4) run a SQL file on production db:
 rem        run_sql.bat <sql-file-path> -db=prod
-rem   4) no argument: enter interactive mode (type SQL line by line)
+rem   5) no argument: enter interactive mode (type SQL line by line)
 rem ============================================================
 
 set "DM_DRIVER=C:\Users\8823\.m2\repository\com\dameng\DmJdbcDriver18\8.1.3.140\DmJdbcDriver18-8.1.3.140.jar"

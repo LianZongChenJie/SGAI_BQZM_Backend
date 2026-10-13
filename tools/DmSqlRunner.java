@@ -41,9 +41,10 @@ public class DmSqlRunner {
     // 51 服务器库
     private static final String URL_51 =
             "jdbc:dm://192.168.204.51:5238?schema=BQZM&compatibleMode=mysql&ignoreCase=true&ENCODING=utf-8";
-    // 109 服务器库（开发库，51 已迁移/不可达）
-    private static final String URL_109 =
-            "jdbc:dm://192.168.204.109:5238?schema=BQZM&compatibleMode=mysql&ignoreCase=true&ENCODING=utf-8";
+    // 开发库（原 192.168.204.109:5238，2026-10-13 该服务器换 IP 为 192.168.204.17）
+    // 参数同时接受 -db=17 与 -db=109（旧名保留为别名，都指向新地址）
+    private static final String URL_DEV =
+            "jdbc:dm://192.168.204.17:5238?schema=BQZM&compatibleMode=mysql&ignoreCase=true&ENCODING=utf-8";
     private static final String USER = "SYSDBA";
     private static final String PASSWORD = "Liming@2026";
     // 生产库（2026-09-18 用户提供，需内网/VPN 可达）
@@ -56,7 +57,7 @@ public class DmSqlRunner {
     // ================================================
 
     public static void main(String[] args) {
-        // 解析可选参数 -db=local|51|109|prod，默认 local
+        // 解析可选参数 -db=local|51|17|109|prod，默认 local（17 与 109 等价，都指开发库）
         String targetDb = "local";
         String sqlFile = null;
         for (String arg : args) {
@@ -93,8 +94,8 @@ public class DmSqlRunner {
         if ("51".equalsIgnoreCase(targetDb)) {
             return URL_51;
         }
-        if ("109".equalsIgnoreCase(targetDb)) {
-            return URL_109;
+        if ("17".equalsIgnoreCase(targetDb) || "109".equalsIgnoreCase(targetDb)) {
+            return URL_DEV;
         }
         if ("prod".equalsIgnoreCase(targetDb)) {
             return URL_PROD;
