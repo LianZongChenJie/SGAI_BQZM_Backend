@@ -120,7 +120,12 @@ public class LightingCircuitServiceImpl extends ServiceImpl<CircuitMapper, Light
             return;
         }
         LightingCircuit circuit = getOneCircuit(area.getId(), circuitCode);
-        if(circuit == null || status.equals(circuit.getStatus())){
+        if(circuit == null){
+            return;
+        }
+        // 状态未变：正常跳过，但要顺手指掉历史脏数据（开启态却残留关闭时间，否则永远不会被清理）
+        if(status.equals(circuit.getStatus())){
+            clearClosingTimeIfOn(circuit, status, circuit.getClosingTime() != null);
             return;
         }
         // 更新数据（含开启/关闭时间、开启总时长，幂等累计）
@@ -144,9 +149,13 @@ public class LightingCircuitServiceImpl extends ServiceImpl<CircuitMapper, Light
         if (circuit == null || circuit.getId() == null) {
             return;
         }
-        circuit.setOperatorBy(operatorBy != null && !operatorBy.isEmpty() ? operatorBy : currentOperator());
-        circuit.setOperatorTime(LocalDateTime.now());
-        super.updateById(circuit);
+        // 只定向更新操作人/操作时间：整实体 updateById 会把调用方读取时的旧快照（状态、开关时间）一起回写，
+        // 批量控制循环里若期间收到 MQ 状态回传，就会把新状态覆盖回去
+        super.update(new LambdaUpdateWrapper<LightingCircuit>()
+                .eq(LightingCircuit::getId, circuit.getId())
+                .set(LightingCircuit::getOperatorBy,
+                        operatorBy != null && !operatorBy.isEmpty() ? operatorBy : currentOperator())
+                .set(LightingCircuit::getOperatorTime, LocalDateTime.now()));
     }
 
     /**
@@ -249,9 +258,11 @@ public class LightingCircuitServiceImpl extends ServiceImpl<CircuitMapper, Light
      * 指令是否真正执行、何时执行，由 MQ 回传状态时落库；设备不回传则保持原状态。
      */
     private void updateControlInfo(LightingCircuit circuit) {
-        circuit.setOperatorBy(currentOperator());
-        circuit.setOperatorTime(LocalDateTime.now());
-        super.updateById(circuit);
+        // 只定向更新操作人/操作时间，避免整实体回写把期间收到的 MQ 状态/开关时间覆盖回旧快照
+        super.update(new LambdaUpdateWrapper<LightingCircuit>()
+                .eq(LightingCircuit::getId, circuit.getId())
+                .set(LightingCircuit::getOperatorBy, currentOperator())
+                .set(LightingCircuit::getOperatorTime, LocalDateTime.now()));
     }
 
     /**
