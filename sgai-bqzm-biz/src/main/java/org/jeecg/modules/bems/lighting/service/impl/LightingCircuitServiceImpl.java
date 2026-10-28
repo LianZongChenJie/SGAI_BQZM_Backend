@@ -124,8 +124,10 @@ public class LightingCircuitServiceImpl extends ServiceImpl<CircuitMapper, Light
             return;
         }
         // 更新数据（含开启/关闭时间、开启总时长，幂等累计）
+        boolean hadClosingTime = circuit.getClosingTime() != null;
         applyStatusFields(circuit, status, LocalDateTime.now());
         super.updateById(circuit);
+        clearClosingTimeIfOn(circuit, status, hadClosingTime);
         // 更新场景开启时长
         areaService.update(new LambdaUpdateWrapper<LightingArea>()
                 .eq(LightingArea::getId,area.getId())
@@ -162,6 +164,10 @@ public class LightingCircuitServiceImpl extends ServiceImpl<CircuitMapper, Light
             circuit.setAllDuration(duration);
             return;
         }
+        // 历史脏数据兜底（出参不落库）：关闭时间早于开启时间说明是上一周期残留值，不再展示
+        if (circuit.getClosingTime() != null && circuit.getClosingTime().isBefore(start)) {
+            circuit.setClosingTime(null);
+        }
         if (LightingCircuit.STATUS_ON.equals(circuit.getStatus())) {
             // 开启中：实时累加当前周期
             if (!start.isAfter(now)) {
@@ -182,8 +188,26 @@ public class LightingCircuitServiceImpl extends ServiceImpl<CircuitMapper, Light
      */
     @Override
     public void applyStatus(LightingCircuit circuit, String status) {
+        boolean hadClosingTime = circuit.getClosingTime() != null;
         applyStatusFields(circuit, status, LocalDateTime.now());
         super.updateById(circuit);
+        clearClosingTimeIfOn(circuit, status, hadClosingTime);
+    }
+
+    /**
+     * 开启时显式清空 closing_time。
+     * updateById 走 MyBatis-Plus 默认 NOT_NULL 更新策略，null 字段不会进入 UPDATE 语句，
+     * applyStatusFields 里 setClosingTime(null) 实际是空操作，会导致关闭时间残留上一周期的值
+     * （表现为"关闭时间早于开启时间"，且该回路之后再也不更新关闭时间、不累加时长）。
+     *
+     * @param hadClosingTime 进入本次处理前 closing_time 是否非空；只有非空才需要真的发一条 UPDATE
+     */
+    private void clearClosingTimeIfOn(LightingCircuit circuit, String status, boolean hadClosingTime) {
+        if (hadClosingTime && LightingCircuit.STATUS_ON.equals(status) && circuit.getId() != null) {
+            super.update(new LambdaUpdateWrapper<LightingCircuit>()
+                    .eq(LightingCircuit::getId, circuit.getId())
+                    .set(LightingCircuit::getClosingTime, null));
+        }
     }
 
     /**
@@ -200,16 +224,21 @@ public class LightingCircuitServiceImpl extends ServiceImpl<CircuitMapper, Light
             // 本周期已结算过（closing_time 非空）就不再处理：
             // 避免设备重复/周期上报"关闭"时把关闭时间一直往后推、开启时长被重复累计
             if (circuit.getClosingTime() == null) {
+                LocalDateTime endTime = time;
                 if (circuit.getStartTime() != null) {
+                    // 消息乱序/延迟兜底：关闭时刻早于开启时刻时按开启时刻结算，避免累加出负时长
+                    if (endTime.isBefore(circuit.getStartTime())) {
+                        endTime = circuit.getStartTime();
+                    }
                     // 计算本周期开启时长并累计
-                    long seconds = LocalDateTimeUtil.between(circuit.getStartTime(), time).getSeconds();
+                    long seconds = LocalDateTimeUtil.between(circuit.getStartTime(), endTime).getSeconds();
                     Long allDuration = circuit.getAllDuration();
                     if (allDuration == null) {
                         allDuration = 0L;
                     }
                     circuit.setAllDuration(allDuration + seconds);
                 }
-                circuit.setClosingTime(time);
+                circuit.setClosingTime(endTime);
             }
         }
     }
