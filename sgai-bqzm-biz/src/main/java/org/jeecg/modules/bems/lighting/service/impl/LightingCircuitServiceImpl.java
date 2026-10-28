@@ -175,10 +175,10 @@ public class LightingCircuitServiceImpl extends ServiceImpl<CircuitMapper, Light
     }
 
     /**
-     * 更新回路状态并维护开启/关闭时间、开启总时长
+     * 更新回路状态并维护开启/关闭时间、开启总时长（设备 MQ 回传状态时调用，是状态唯一写入源）
      * 幂等规则：
      * - 开启：仅当未记录开启时间或当前处于关闭状态时才刷新开启时间，避免周期状态上报刷新导致时长失真
-     * - 关闭：仅当当前未记录关闭时间（即本周期未结算过）时才累计时长，重复关闭消息不会重复累计
+     * - 关闭：本周期已结算（closing_time 非空）时不再处理，重复关闭消息不会重复累计时长、也不会刷新关闭时间
      */
     @Override
     public void applyStatus(LightingCircuit circuit, String status) {
@@ -197,25 +197,29 @@ public class LightingCircuitServiceImpl extends ServiceImpl<CircuitMapper, Light
             }
             circuit.setClosingTime(null);
         } else if (LightingCircuit.STATUS_OFF.equals(status)) {
-            if (circuit.getClosingTime() == null && circuit.getStartTime() != null) {
-                // 计算本周期开启时长并累计
-                long seconds = LocalDateTimeUtil.between(circuit.getStartTime(), time).getSeconds();
-                Long allDuration = circuit.getAllDuration();
-                if (allDuration == null) {
-                    allDuration = 0L;
+            // 本周期已结算过（closing_time 非空）就不再处理：
+            // 避免设备重复/周期上报"关闭"时把关闭时间一直往后推、开启时长被重复累计
+            if (circuit.getClosingTime() == null) {
+                if (circuit.getStartTime() != null) {
+                    // 计算本周期开启时长并累计
+                    long seconds = LocalDateTimeUtil.between(circuit.getStartTime(), time).getSeconds();
+                    Long allDuration = circuit.getAllDuration();
+                    if (allDuration == null) {
+                        allDuration = 0L;
+                    }
+                    circuit.setAllDuration(allDuration + seconds);
                 }
-                circuit.setAllDuration(allDuration + seconds);
+                circuit.setClosingTime(time);
             }
-            circuit.setClosingTime(time);
         }
     }
 
     /**
-     * 控制指令发出后乐观更新回路的操作人、操作时间及开关时间
-     * （不直接改状态，状态以设备回传为准；重复关闭不重复累计时长）
+     * 控制指令发出后只记录回路的操作人、操作时间：
+     * 状态、开启时间、关闭时间、开启总时长一律不改，完全以设备回传为准（见 applyStatus）。
+     * 指令是否真正执行、何时执行，由 MQ 回传状态时落库；设备不回传则保持原状态。
      */
-    private void updateControlInfo(LightingCircuit circuit, boolean type) {
-        applyStatusFields(circuit, type ? LightingCircuit.STATUS_ON : LightingCircuit.STATUS_OFF, LocalDateTime.now());
+    private void updateControlInfo(LightingCircuit circuit) {
         circuit.setOperatorBy(currentOperator());
         circuit.setOperatorTime(LocalDateTime.now());
         super.updateById(circuit);
@@ -314,8 +318,8 @@ public class LightingCircuitServiceImpl extends ServiceImpl<CircuitMapper, Light
             service.circuitClose(area.getSpace(),area.getAreaCode(),data.getCircuitCode());
             lightingOperationLogService.saveLog(LightingOperationLog.LOG_TYPE_CIRCUIT, parentId, LightingOperationLog.REL_TYPE_CIRCUIT, id, area.getAreaName() + "-" + data.getCircuitName(), LocalDateTime.now(), "回路关闭");
         }
-        // 乐观更新操作人/操作时间及开关时间
-        updateControlInfo(data, type);
+        // 只记录操作人/操作时间（状态与开关时间以设备回传为准）
+        updateControlInfo(data);
     }
 
     /**
@@ -340,8 +344,8 @@ public class LightingCircuitServiceImpl extends ServiceImpl<CircuitMapper, Light
                 area.getAreaName() + "-" + circuit.getCircuitName(),
                 LocalDateTime.now(), operName);
 
-        // 乐观更新操作人/操作时间及开关时间
-        updateControlInfo(circuit, type);
+        // 只记录操作人/操作时间（状态与开关时间以设备回传为准）
+        updateControlInfo(circuit);
     }
 
     /**
@@ -366,8 +370,8 @@ public class LightingCircuitServiceImpl extends ServiceImpl<CircuitMapper, Light
                 area.getAreaName() + "-" + circuit.getCircuitName(),
                 LocalDateTime.now(), operName);
 
-        // 乐观更新操作人/操作时间及开关时间
-        updateControlInfo(circuit, type);
+        // 只记录操作人/操作时间（状态与开关时间以设备回传为准）
+        updateControlInfo(circuit);
     }
 
     /**
@@ -393,8 +397,8 @@ public class LightingCircuitServiceImpl extends ServiceImpl<CircuitMapper, Light
                 area.getAreaName() + "-" + circuit.getCircuitName(),
                 LocalDateTime.now(), operName);
 
-        // 乐观更新操作人/操作时间及开关时间
-        updateControlInfo(circuit, type);
+        // 只记录操作人/操作时间（状态与开关时间以设备回传为准）
+        updateControlInfo(circuit);
     }
 
     /**
@@ -424,7 +428,7 @@ public class LightingCircuitServiceImpl extends ServiceImpl<CircuitMapper, Light
                 area.getAreaName() + "-" + circuit.getCircuitName(),
                 LocalDateTime.now(), operName);
 
-        // 乐观更新操作人/操作时间及开关时间
-        updateControlInfo(circuit, type);
+        // 只记录操作人/操作时间（状态与开关时间以设备回传为准）
+        updateControlInfo(circuit);
     }
 }
