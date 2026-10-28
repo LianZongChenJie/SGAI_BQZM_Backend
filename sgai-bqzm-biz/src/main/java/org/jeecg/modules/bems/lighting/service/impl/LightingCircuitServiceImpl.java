@@ -129,10 +129,7 @@ public class LightingCircuitServiceImpl extends ServiceImpl<CircuitMapper, Light
             return;
         }
         // 更新数据（含开启/关闭时间、开启总时长，幂等累计）
-        boolean hadClosingTime = circuit.getClosingTime() != null;
-        applyStatusFields(circuit, status, LocalDateTime.now());
-        super.updateById(circuit);
-        clearClosingTimeIfOn(circuit, status, hadClosingTime);
+        applyStatus(circuit, status);
         // 更新场景开启时长
         areaService.update(new LambdaUpdateWrapper<LightingArea>()
                 .eq(LightingArea::getId,area.getId())
@@ -197,17 +194,50 @@ public class LightingCircuitServiceImpl extends ServiceImpl<CircuitMapper, Light
      */
     @Override
     public void applyStatus(LightingCircuit circuit, String status) {
-        boolean hadClosingTime = circuit.getClosingTime() != null;
+        if (circuit == null || circuit.getId() == null) {
+            return;
+        }
         applyStatusFields(circuit, status, LocalDateTime.now());
-        super.updateById(circuit);
-        clearClosingTimeIfOn(circuit, status, hadClosingTime);
+        persistStatusFields(circuit);
     }
 
     /**
-     * 开启时显式清空 closing_time。
+     * 只落库状态相关的 4 个字段（status / start_time / closing_time / all_duration）。
+     * <p>
+     * 不用整实体 updateById：它会把调用方查库时的旧快照里的所有非 null 字段（electric_current、
+     * comstat、operator_by 等）一起回写，并发链路（如 DataType=1 电流消息、Web 控制）刚写入的新值
+     * 会被旧快照覆盖。2026-10-28 与 recordControlOperator 的修复属同一类问题。
+     * <p>
+     * closing_time 为 null 时必须用 setSql 写字面量：常规 .set(...) 传 null 在达梦驱动上易报
+     * "无效的列类型"；updateById 则因 NOT_NULL 策略直接丢弃该字段。
+     */
+    private void persistStatusFields(LightingCircuit circuit) {
+        LambdaUpdateWrapper<LightingCircuit> wrapper = new LambdaUpdateWrapper<LightingCircuit>()
+                .eq(LightingCircuit::getId, circuit.getId())
+                .set(LightingCircuit::getStatus, circuit.getStatus());
+        if (circuit.getStartTime() != null) {
+            wrapper.set(LightingCircuit::getStartTime, circuit.getStartTime());
+        }
+        if (circuit.getClosingTime() == null) {
+            wrapper.setSql("closing_time = null");
+        } else {
+            wrapper.set(LightingCircuit::getClosingTime, circuit.getClosingTime());
+        }
+        if (circuit.getAllDuration() != null) {
+            wrapper.set(LightingCircuit::getAllDuration, circuit.getAllDuration());
+        }
+        super.update(wrapper);
+    }
+
+    /**
+     * 开启时显式清空 closing_time（仅用于 mqControl 的"状态未变"分支；
+     * 状态变化时由 {@link #persistStatusFields} 在同一条 UPDATE 里一并处理）。
      * updateById 走 MyBatis-Plus 默认 NOT_NULL 更新策略，null 字段不会进入 UPDATE 语句，
      * applyStatusFields 里 setClosingTime(null) 实际是空操作，会导致关闭时间残留上一周期的值
      * （表现为"关闭时间早于开启时间"，且该回路之后再也不更新关闭时间、不累加时长）。
+     * <p>
+     * 这里用 setSql 硬拼 NULL，而不是 .set(getClosingTime, null)：后者会以参数绑定方式传 null，
+     * 达梦驱动对 jdbcType=OTHER 的 null 容易报"无效的列类型"，走字面量最稳。
      *
      * @param hadClosingTime 进入本次处理前 closing_time 是否非空；只有非空才需要真的发一条 UPDATE
      */
@@ -215,7 +245,7 @@ public class LightingCircuitServiceImpl extends ServiceImpl<CircuitMapper, Light
         if (hadClosingTime && LightingCircuit.STATUS_ON.equals(status) && circuit.getId() != null) {
             super.update(new LambdaUpdateWrapper<LightingCircuit>()
                     .eq(LightingCircuit::getId, circuit.getId())
-                    .set(LightingCircuit::getClosingTime, null));
+                    .setSql("closing_time = null"));
         }
     }
 
@@ -314,7 +344,21 @@ public class LightingCircuitServiceImpl extends ServiceImpl<CircuitMapper, Light
             return;
         }
         circuit.setComstat(comstat);
-        super.updateById(circuit);
+        // 只定向更新通讯状态：整实体 updateById 会把旧快照里的状态/开关时间/电流一起回写
+        super.update(new LambdaUpdateWrapper<LightingCircuit>()
+                .eq(LightingCircuit::getId, circuit.getId())
+                .set(LightingCircuit::getComstat, comstat));
+    }
+
+    @Override
+    public void updateElectricCurrent(Long id, Double electricCurrent) {
+        if (id == null || electricCurrent == null) {
+            return;
+        }
+        // 只定向更新电流：DataType=1 消息极频繁，整实体回写会覆盖并发写入的状态/开关时间
+        super.update(new LambdaUpdateWrapper<LightingCircuit>()
+                .eq(LightingCircuit::getId, id)
+                .set(LightingCircuit::getElectricCurrent, electricCurrent));
     }
 
     private void control(Long id, boolean type, Long parentId){

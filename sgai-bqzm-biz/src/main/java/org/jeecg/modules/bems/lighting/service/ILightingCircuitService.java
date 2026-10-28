@@ -30,6 +30,11 @@ public interface ILightingCircuitService extends IService<LightingCircuit> {
     void updateComstat(String space,String areaCode,String circuitCode,String comstat);
 
     /**
+     * 只更新回路实时电流（DataType=1 电流消息专用，避免整实体回写覆盖并发写入的状态/开关时间）
+     */
+    void updateElectricCurrent(Long id, Double electricCurrent);
+
+    /**
      * 记录回路控制操作人/操作时间（区域全开/全关、一键全开/全关等批量控制时调用；
      * 不改变回路状态与开关时间，状态以设备回传为准）
      */

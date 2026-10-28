@@ -532,8 +532,9 @@ public class LightingMsgListener {
         if ("1".equals(dataType)) {
             try {
                 double current = Double.parseDouble(value.trim());
-                circuit.setElectricCurrent(current);
-                circuitService.updateById(circuit);
+                // 定向更新电流：整实体 updateById 会把查库时的旧快照（状态/开关时间/操作人）回写，
+                // 电流消息频率高，与状态消息并发时会覆盖刚写入的新状态
+                circuitService.updateElectricCurrent(circuit.getId(), current);
 //                    log.info("【北区】更新回路电流：circuit_code={}, current={}A", fullCircuitCode, current);
             } catch (NumberFormatException e) {
                 log.warn("【北区】电流值异常，未更新：circuit_code={}, value={}", fullCircuitCode, value);
