@@ -66,7 +66,28 @@
                     <skip>true</skip>
                 </configuration>
             </plugin>
+            <!--
+                打交付包时把 application.yml 剔出 jar（不依赖 clean 的硬隔离）
+                Spring Boot 的 repackage 是拿 maven-jar-plugin 打好的 jar 再封装一层，
+                所以在这里排除掉的文件，target/classes 里就算还留着旧的也进不了最终包。
+            -->
+            <plugin>
+                <groupId>org.apache.maven.plugins</groupId>
+                <artifactId>maven-jar-plugin</artifactId>
+                <configuration>
+                    <excludes>
+                        <exclude>application.yml</exclude>
+                    </excludes>
+                </configuration>
+            </plugin>
         </plugins>
     </build>
+
+    <!--
+        ⚠️ 部署注意：上面把 application.yml 挡在 jar 外了，所以服务器上必须外置配置。
+           放在 jar 同级目录的 config/application.yml 或 ./application.yml 均可，
+           Spring Boot 默认会优先读这两个位置。
+           不提供的话启动即失败（Nacos 会报 spring.application.name 未定义）。
+    -->
 
 </project>
